@@ -182,6 +182,7 @@ class App:
         self.speaker.load()
         mic = Microphone(sr, vad.block_ms, cfg.get("audio.input_device") or None)
         mic.start()
+        print(f"Микрофон: {mic.name}")
         return VoiceParts(mic, wake, stop_detector, asr, vad, phrases)
 
     def run_voice(self, parts: VoiceParts | None = None, console: bool = True) -> None:
@@ -416,6 +417,20 @@ def setup_audit_log(config: Config) -> None:
     audit.addHandler(handler)
 
 
+def apply_saved_settings(config: Config) -> None:
+    """Перекрыть config.toml настройками из memory.db (выбранный микрофон и т.п.)."""
+    try:
+        memory = Memory(config.path("memory.db_path"))
+    except Exception as e:  # повреждённая база не должна мешать запуску
+        log.warning("Не удалось прочитать сохранённые настройки: %s", e)
+        return
+    try:
+        for key, value in memory.all_settings().items():
+            config.set(key, value)
+    finally:
+        memory.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jarvis", description="Локальный голосовой помощник")
     parser.add_argument("--config", help="путь к config.toml")
@@ -452,6 +467,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     config = Config.load(args.config)
+    # Настройки, сохранённые голосом и мастером микрофона (memory.db), — до проверок,
+    # иначе проверка показывает микрофон по умолчанию, а не выбранный.
+    apply_saved_settings(config)
     voice = not args.text
     setup_logging(config, args.verbose)
     setup_audit_log(config)

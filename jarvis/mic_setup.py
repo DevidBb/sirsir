@@ -73,6 +73,16 @@ def _record(sd, device, seconds: float) -> np.ndarray:
         return resample(data[:, 0], native, SR)
 
 
+# Виртуальные устройства записи: выбирать их по ошибке — частая причина «не слышит».
+VIRTUAL_WORDS = ("steam streaming", "virtual", "voicemeeter", "cable output", "stereo mix",
+                 "стерео микшер")
+
+
+def is_virtual(name: str) -> bool:
+    low = name.lower()
+    return any(w in low for w in VIRTUAL_WORDS)
+
+
 def input_devices(sd) -> list[tuple[int, str, str, int]]:
     hostapis = sd.query_hostapis()
     out = []
@@ -95,7 +105,8 @@ def run(config: Config) -> int:
     default = sd.default.device[0]
     print("Микрофоны:")
     for i, name, api, rate in devices:
-        print(f"  {'*' if i == default else ' '}{i:3}: {name}  [{api}, {rate} Гц]")
+        note = "  ← виртуальный, звука с него не будет" if is_virtual(name) else ""
+        print(f"  {'*' if i == default else ' '}{i:3}: {name}  [{api}, {rate} Гц]{note}")
     choice = input("\nНомер микрофона (Enter — отмеченный *): ").strip()
     device = int(choice) if choice.isdigit() else None
     chosen = next(((n, api) for i, n, api, _ in devices
@@ -121,7 +132,7 @@ def run(config: Config) -> int:
         # «имя|интерфейс»: индексы в Windows меняются, имена повторяются в MME/WASAPI.
         mem.set_setting("audio.input_device", f"{chosen[0]}|{chosen[1]}" if device is not None else "")
         mem.close()
-        print("Сохранено. Запускайте помощника: run.bat")
+        print(f"Сохранено: «{name}». При запуске run.bat в строке «Микрофон:» должно быть это имя.")
     return 0
 
 

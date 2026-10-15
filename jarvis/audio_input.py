@@ -186,6 +186,15 @@ class Microphone:
                                           device=self.device, callback=self._callback)
         self._stream.start()
 
+    @property
+    def name(self) -> str:
+        """Имя устройства, которое реально слушаем (для вывода при запуске)."""
+        try:
+            import sounddevice as sd
+            return str(sd.query_devices(self.device, "input")["name"])
+        except Exception:
+            return "по умолчанию" if self.device is None else str(self.device)
+
     def stop(self) -> None:
         if self._stream is not None:
             self._stream.stop()

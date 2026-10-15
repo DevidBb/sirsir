@@ -53,3 +53,23 @@ def test_input_devices_filters_outputs():
                     {"name": "Динамики", "max_input_channels": 0, "hostapi": 0, "default_samplerate": 48000.0},
                     {"name": "Микрофон", "max_input_channels": 2, "hostapi": 1, "default_samplerate": 48000.0}]
     assert input_devices(SD) == [(0, "Микрофон", "MME", 44100), (2, "Микрофон", "Windows WASAPI", 48000)]
+
+
+def test_virtual_microphones_marked():
+    from jarvis.mic_setup import is_virtual
+    assert is_virtual("Microphone (Steam Streaming Microphone)")
+    assert is_virtual("CABLE Output (VB-Audio Virtual Cable)")
+    assert not is_virtual("Микрофон (Realtek(R) Audio)")
+    assert not is_virtual("Microphone (2- USB Audio Device)")
+
+
+def test_saved_microphone_visible_to_startup_check(config):
+    """Выбор из мастера (memory.db) должен перекрывать config.toml ещё до проверок."""
+    from jarvis.main import apply_saved_settings
+    from jarvis.memory import Memory
+    mem = Memory(config.path("memory.db_path"))
+    mem.set_setting("audio.input_device", "Микрофон (Realtek(R) Audio)|MME")
+    mem.close()
+    assert not config.get("audio.input_device")
+    apply_saved_settings(config)
+    assert config.get("audio.input_device") == "Микрофон (Realtek(R) Audio)|MME"
