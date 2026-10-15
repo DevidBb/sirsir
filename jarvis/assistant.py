@@ -19,7 +19,8 @@ from typing import Any, Callable
 from .config import Config
 from .dictation import Dictation
 from .intents import IntentMatcher
-from .llm import SYSTEM_PROMPT, Conversation, LLMError, OllamaClient, SentenceStream
+from .llm import (SYSTEM_PROMPT, Conversation, LLMError, OllamaClient, SentenceStream,
+                  looks_like_tool_text)
 from .memory import Memory
 from .security import (CommandGuard, ConfirmationManager, EmergencyStop,
                        contains_phrase, normalize)
@@ -89,6 +90,13 @@ class Assistant:
                                      config.get("windows.folders", {}))
 
     # ------------------------------------------------------------------
+    def emergency_stop(self) -> None:
+        """Потокобезопасная остановка (из консоли или трея, пока идёт ответ):
+        только флаги — историю диалога правит поток, который её ведёт."""
+        self.emergency.trigger()
+        self.confirmations.cancel()
+        self.dictation.active = False
+
     def handle(self, text: str, on_sentence: Callable[[str], bool] | None = None) -> Reply | None:
         """on_sentence — озвучивать ответ LLM по мере генерации (вернуть False — прервать)."""
         reply = self._handle(text, on_sentence)
@@ -102,18 +110,20 @@ class Assistant:
             return None
 
         if self.emergency.matches(text):
-            self.emergency.trigger()
-            self.confirmations.cancel()
-            self.dictation.active = False
+            self.emergency_stop()
             self.conversation.abort_turn()
             return Reply("Остановлено.", STOP, expect_followup=False)
 
         if self.confirmations.has_pending():
             status, result = self.confirmations.resolve(text)
-            if status == ConfirmationManager.CONFIRMED:
-                return Reply(str(result) if result else "Готово.")
-            if status == ConfirmationManager.CANCELLED:
-                return Reply("Действие отменено.")
+            if status in (ConfirmationManager.CONFIRMED, ConfirmationManager.CANCELLED):
+                answer = (str(result) if result else "Готово.") \
+                    if status == ConfirmationManager.CONFIRMED else "Действие отменено."
+                # Модель должна знать исход: иначе в истории остаётся «ожидает подтверждения».
+                self.conversation.begin_turn(text)
+                self.conversation.add({"role": "assistant", "content": answer})
+                self.conversation.end_turn()
+                return Reply(answer)
             # просрочено — обрабатываем как обычную реплику
 
         if self.dictation.active:
@@ -212,23 +222,32 @@ class Assistant:
         seen_calls: set[str] = set()
         spoken = False
         try:
+            def guarded(sentence: str) -> bool:
+                # Аварийная остановка из другого потока обрывает речь и генерацию.
+                return not self.emergency.active and on_sentence(sentence) is not False
+
             for _ in range(self.max_tool_calls + 1):
-                stream = SentenceStream(on_sentence) if on_sentence else None
+                stream = SentenceStream(guarded) if on_sentence else None
                 message = self.llm.chat(self.conversation.messages(self._system_prompt()),
                                         tools=self.registry.schemas(),
                                         on_text=stream.feed if stream else None)
+                if self.emergency.active:
+                    self.conversation.abort_turn()
+                    return Reply("Остановлено.", STOP, expect_followup=False)
                 if stream is not None:
                     if stream.cancelled:  # перебили во время ответа
                         self.conversation.abort_turn()
                         return Reply("", spoken=True)
                     stream.flush()
                     spoken = spoken or bool(stream.spoken)
-                if self.emergency.active:
-                    self.conversation.abort_turn()
-                    return Reply("Остановлено.", STOP, expect_followup=False)
                 calls = message.get("tool_calls") or []
                 if not calls:
                     answer = message.get("content") or ""
+                    if looks_like_tool_text(answer):
+                        # Похоже на сломанный вызов инструмента — не зачитываем JSON вслух.
+                        log.warning("Непонятный ответ модели: %r", answer[:200])
+                        self.conversation.abort_turn()
+                        return Reply("Не получилось понять, что сделать. Скажите иначе, пожалуйста.")
                     self.conversation.add({"role": "assistant", "content": answer})
                     self.conversation.end_turn()
                     if not answer:

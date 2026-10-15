@@ -203,3 +203,41 @@ def test_confirmation_reply_is_not_streamed(config):
     reply = a.handle("слушай, мне пора спать, выключи этот компьютер полностью прямо сейчас",
                      on_sentence=lambda s: spoken.append(s) or True)
     assert "подтверждение" in reply.text.lower() and not reply.spoken
+
+
+def test_emergency_from_other_thread_during_answer(config):
+    import threading
+    a = build(config, [text("Первое длинное предложение. Второе длинное предложение. Третье предложение.")])
+    spoken = []
+
+    def on_sentence(s):
+        spoken.append(s)
+        # «s» в консоли / «Остановить» в трее — из другого потока, пока идёт ответ
+        t = threading.Thread(target=a.emergency_stop)
+        t.start()
+        t.join()
+        return True
+
+    reply = a.handle("расскажи что-нибудь длинное", on_sentence=on_sentence)
+    assert reply.action == "stop"
+    assert spoken == ["Первое длинное предложение."]
+    assert len(a.conversation) == 0
+    # после остановки помощник продолжает работать
+    a.fake.responses.append(text("Я здесь."))
+    assert a.handle("ты тут?").text == "Я здесь."
+
+
+def test_confirmation_outcome_goes_to_history(config):
+    a = build(config, [tool_call("shutdown_computer"), text("ок")])
+    a.registry.get("shutdown_computer").handler = lambda: "Компьютер выключится через 60 секунд."
+    a.handle("слушай, выключи мне этот компьютер полностью прямо сейчас пожалуйста")
+    a.handle("подтверждаю")
+    a.handle("а когда он выключится")
+    history = [m["content"] for m in a.fake.requests[-1]["messages"]]
+    assert "Компьютер выключится через 60 секунд." in history
+
+
+def test_broken_json_is_not_read_aloud(config):
+    a = build(config, [text('{"name": "unknown_tool", "arguments": {}}')])
+    reply = a.handle("сделай что-нибудь странное")
+    assert "{" not in reply.text and "Скажите иначе" in reply.text

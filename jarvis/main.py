@@ -263,8 +263,10 @@ class App:
             print("Микрофон выключен.", flush=True)
 
     def emergency_stop(self) -> None:
+        # Из консоли/трея — другой поток: только флаги, без правки истории диалога.
+        self.assistant.emergency_stop()
+        self.barged_in = True
         self.speaker.interrupt()
-        self.assistant.handle(self.assistant.emergency.phrases[0])
         print("Аварийная остановка.", flush=True)
 
     def quit(self) -> None:
