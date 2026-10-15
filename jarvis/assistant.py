@@ -38,11 +38,19 @@ BUILTIN_PHRASES = {
     "clear_memory": ["очисти память", "забудь все", "сотри память"],
     "reset_dialog": ["новый диалог", "сбрось диалог", "начнем сначала"],
     "exit": ["заверши работу", "выключись", "выключайся", "заверши программу"],
+    "help": ["что ты умеешь", "что ты можешь", "какие команды", "помощь", "справка"],
+    "repeat": ["повтори", "повтори пожалуйста", "что ты сказал", "не расслышал", "еще раз"],
     "start_dictation": ["начни диктовку", "режим диктовки", "включи диктовку", "диктовка"],
     "stop_dictation": ["закончи диктовку", "конец диктовки", "выключи диктовку", "стоп диктовка",
                        "хватит диктовки"],
 }
 TYPE_PREFIXES = ("напечатай ", "набери ", "впиши ")
+
+HELP_TEXT = ("Я умею: открывать программы, сайты и папки; искать файлы; ставить таймеры и "
+             "напоминания; записывать заметки; считать; управлять громкостью и музыкой; "
+             "сворачивать окна; печатать под диктовку; блокировать и выключать компьютер; "
+             "рассказывать о системе и просто отвечать на вопросы. "
+             "Скажите «стоп», чтобы перебить меня.")
 
 
 @dataclass
@@ -80,6 +88,12 @@ class Assistant:
 
     # ------------------------------------------------------------------
     def handle(self, text: str) -> Reply | None:
+        reply = self._handle(text)
+        if reply is not None and reply.text and not self._matches(text or "", "repeat"):
+            self.last_reply = reply.text
+        return reply
+
+    def _handle(self, text: str) -> Reply | None:
         text = (text or "").strip()
         if not normalize(text):
             return None
@@ -101,6 +115,9 @@ class Assistant:
 
         if self.dictation.active:
             return self._dictate(text)
+
+        if self._matches(text, "repeat"):  # до антиповтора: «повтори» дважды — законно
+            return Reply(getattr(self, "last_reply", "") or "Я ещё ничего не говорил.")
 
         if self.guard.is_duplicate_command(text):
             log.info("Повтор команды проигнорирован: %s", text)
@@ -133,8 +150,8 @@ class Assistant:
     def _matches(self, text: str, key: str) -> bool:
         norm = normalize(text)
         phrases = BUILTIN_PHRASES[key]
-        if key == "cancel":
-            # «отмена» — только как отдельная короткая реплика.
+        if key in ("cancel", "repeat", "help"):
+            # Только как отдельная короткая реплика, иначе «поставь таймер ещё раз» → повтор.
             return norm in [normalize(p) for p in phrases]
         return contains_phrase(norm, phrases) and len(norm.split()) <= 6
 
@@ -155,6 +172,8 @@ class Assistant:
                 # Печатаем ровно то, что сказал пользователь, без участия LLM.
                 error = self.dictation.type_text(text.strip()[len(prefix):])
                 return Reply(error or "", expect_followup=False)
+        if self._matches(text, "help"):
+            return Reply(HELP_TEXT)
         if self._matches(text, "start_dictation") and not self._matches(text, "stop_dictation"):
             self.dictation.active = True
             return Reply("Диктуйте. Чтобы закончить, скажите «закончи диктовку».")

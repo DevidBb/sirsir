@@ -46,6 +46,7 @@ class OllamaClient:
         self.num_ctx = num_ctx
         self.timeout = timeout
         self.keep_alive = keep_alive
+        self.last_stats: dict[str, Any] = {}
 
     def _request(self, path: str, payload: dict | None = None, timeout: float | None = None) -> dict:
         data = json.dumps(payload).encode() if payload is not None else None
@@ -84,6 +85,9 @@ class OllamaClient:
         if tools:
             payload["tools"] = tools
         data = self._request("/api/chat", payload)
+        # Статистика для диагностики: сколько токенов занял запрос и ответ.
+        self.last_stats = {k: data.get(k) for k in
+                           ("prompt_eval_count", "eval_count", "total_duration", "load_duration")}
         message = data.get("message") or {}
         message["content"] = strip_thinking(message.get("content") or "")
         return message

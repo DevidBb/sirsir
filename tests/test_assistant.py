@@ -153,3 +153,18 @@ def test_actions_are_audited(config, caplog):
         a.handle("открой калькулятор")
     assert any("open_app" in r.getMessage() and "калькулятор" in r.getMessage()
                for r in caplog.records)
+
+
+def test_help_and_repeat(config):
+    a = build(config, [text("Москва — столица России.")])
+    assert a.handle("повтори").text == "Я ещё ничего не говорил."
+    a.handle("какая столица России")
+    assert a.handle("Повтори.").text == "Москва — столица России."
+    assert a.handle("повтори").text == "Москва — столица России."  # повтор повтора
+    assert "таймеры" in a.handle("Что ты умеешь?").text
+    assert len(a.fake.requests) == 1
+
+
+def test_repeat_only_as_whole_phrase(config):
+    a = build(config, [text("Хорошо.")])
+    assert a.handle("поставь таймер еще раз").text != "Я ещё ничего не говорил."
