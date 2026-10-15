@@ -31,3 +31,13 @@ def test_checks_report_missing_ollama(config, capsys):
     results = checks.run_all(config, voice=False)
     assert not checks.report(results)
     assert "Ollama" in capsys.readouterr().out
+
+
+def test_text_mode_reminder_end_to_end(config, capsys):
+    app = App(config, voice=False)
+    reply = app.assistant.handle("Поставь таймер на 5 минут")
+    assert reply.text == "Таймер на 5 минут запущен."
+    app.reminders.clock = lambda: 10**12  # «прошло много времени»
+    due = app.reminders.pop_due()
+    assert len(due) == 1 and due[0][1] == "timer"
+    app.close()

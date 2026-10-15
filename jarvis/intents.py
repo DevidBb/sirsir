@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from .reminders import parse_duration
 from .security import normalize
 
 
@@ -25,6 +26,12 @@ TIME_PHRASES = ("который час", "сколько времени", "ка�
                 "какая сегодня дата", "какое число")
 SYSINFO_PHRASES = ("состояние системы", "загрузка системы", "системная информация",
                    "как там компьютер", "сколько свободно памяти")
+TIMER_RE = re.compile(r"^(?:поставь |заведи |запусти |включи )?таймер (.+)$")
+REMIND_IN_RE = re.compile(r"^напомни(?: мне)? через (.+)$")
+REMIND_AT_RE = re.compile(r"^напомни(?: мне)? в (\d{1,2}) (\d{2}) (?:что |чтобы |о том что )?(.+)$")
+LIST_REMINDERS = ("какие напоминания", "мои напоминания", "какие таймеры", "список напоминаний",
+                  "сколько осталось на таймере", "что с таймером")
+CANCEL_REMINDERS_RE = re.compile(r"^(?:отмени|удали|сбрось|выключи|останови) (?:все )?(?:таймеры?|напоминания?)$")
 MEDIA_PATTERNS = [
     (re.compile(r"(?:сделай )?(?:погромче|громче|прибавь звук|увеличь громкость)"), "volume_up"),
     (re.compile(r"(?:сделай )?(?:потише|тише|убавь звук|уменьши громкость)"), "volume_down"),
@@ -50,7 +57,12 @@ class IntentMatcher:
 
     def match(self, text: str) -> Intent | None:
         norm = normalize(text)
-        if not norm or len(norm.split()) > 7:
+        if not norm:
+            return None
+        reminder = self._match_reminder(norm)
+        if reminder is not None:
+            return reminder
+        if len(norm.split()) > 7:
             return None  # длинные фразы — пусть разбирается LLM
         if norm in TIME_PHRASES:
             return Intent("current_time")
@@ -68,4 +80,32 @@ class IntentMatcher:
             site = _lookup(target, self.websites)
             if site:
                 return Intent("open_website", {"name": site})
+        return None
+
+    @staticmethod
+    def _match_reminder(norm: str) -> Intent | None:
+        if norm in LIST_REMINDERS:
+            return Intent("list_reminders")
+        if CANCEL_REMINDERS_RE.match(norm):
+            return Intent("cancel_reminders")
+        m = TIMER_RE.match(norm)
+        if m:
+            seconds = parse_duration(m.group(1))
+            return Intent("set_timer", {"seconds": seconds}) if seconds else None
+        m = REMIND_AT_RE.match(norm)
+        if m:
+            return Intent("set_reminder", {"text": m.group(3),
+                                           "at_time": f"{int(m.group(1)):02d}:{m.group(2)}"})
+        m = REMIND_IN_RE.match(norm)
+        if m:
+            # «через двадцать пять минут позвонить маме»: ищем самое длинное
+            # начало, которое читается как длительность.
+            words = m.group(1).split()
+            for k in range(min(4, len(words) - 1), 0, -1):
+                seconds = parse_duration(" ".join(words[:k]))
+                if seconds:
+                    rest = re.sub(r"^(?:что |чтобы |о том что |про )", "", " ".join(words[k:]) + " ").strip()
+                    if rest and seconds % 60 == 0:
+                        return Intent("set_reminder", {"text": rest, "minutes": seconds // 60})
+            return None
         return None

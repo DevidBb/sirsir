@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import queue
 import sys
 import threading
 from typing import Any
@@ -19,6 +20,7 @@ from .assistant import EXIT, MUTE, STOP, Assistant, Reply
 from .config import Config
 from .llm import OllamaClient
 from .memory import Memory
+from .reminders import Reminders
 from .security import NetworkGuard
 from .text_to_speech import Speaker, play_beep
 from .tool_registry import ToolRegistry
@@ -35,6 +37,9 @@ class App:
         self.tray = None
         self.mic = None
         self.stop_event = threading.Event()
+        # Будит голосовой цикл, когда нужно что-то сказать без «Джарвис».
+        self.wake_interrupt = threading.Event()
+        self.notifications: queue.Queue[str] = queue.Queue()
         self.memory = Memory(config.path("memory.db_path"), int(config.get("memory.max_facts", 200)))
         self._apply_saved_settings()
 
@@ -53,6 +58,8 @@ class App:
         self.registry = ToolRegistry()
         WindowsController(config).register_tools(self.registry)
         self.memory.register_tools(self.registry, on_setting_changed=self._on_setting_changed)
+        self.reminders = Reminders(self.memory)
+        self.reminders.register_tools(self.registry)
         self.assistant = Assistant(config, self.llm, self.registry, self.memory,
                                    on_setting_changed=self._on_setting_changed)
 
@@ -71,6 +78,25 @@ class App:
             self.llm.num_predict = int(value)
         self.speaker.apply_settings()
 
+    # --- напоминания ---
+    def _on_reminder(self, text: str) -> None:
+        if self.voice:
+            self.notifications.put(text)
+            self.wake_interrupt.set()
+            if self.tray:
+                self.tray.notify(text)
+        else:
+            self.speaker.say(text)
+
+    def _deliver_notifications(self) -> None:
+        while True:
+            try:
+                text = self.notifications.get_nowait()
+            except queue.Empty:
+                return
+            play_beep()
+            self._speak(self.mic, text)
+
     # --- общий обработчик ---
     def respond(self, text: str) -> Reply | None:
         reply = self.assistant.handle(text)
@@ -86,6 +112,7 @@ class App:
     # --- текстовый режим ---
     def run_text(self) -> None:
         print("Текстовый режим. Пишите команды; «заверши работу» или Ctrl+C — выход.")
+        self.reminders.start(self._on_reminder)
         while not self.stop_event.is_set():
             try:
                 line = input("> ")
@@ -132,20 +159,29 @@ class App:
             from .tray import Tray
             self.tray = Tray(self.toggle_mic, lambda: mic.muted, self.emergency_stop, self.quit)
             self.tray.start()
+        self.reminders.start(self._on_reminder)
         self.speaker.say(f"{cfg.get('assistant.name', 'Джарвис')} готов.")
         print("Скажите «Джарвис». Enter — вкл/выкл микрофон, s+Enter — стоп, q+Enter — выход.")
 
         try:
             while not self.stop_event.is_set():
+                if not self.notifications.empty():
+                    self._deliver_notifications()
                 if mic.muted:
                     self._state("muted")
-                    self.stop_event.wait(0.3)
+                    self.wake_interrupt.wait(0.3)
+                    self.wake_interrupt.clear()
                     continue
                 self._state("idle")
-                if not wake.wait(mic.blocks(self.stop_event)):
+                self.wake_interrupt.clear()
+                if not wake.wait(mic.blocks(self.wake_interrupt)):
+                    if self.stop_event.is_set():
+                        break
                     if mic.error:
                         print(f"{mic.error}. Помощник остановлен.")
-                    break
+                        break
+                    wake.reset()
+                    continue  # разбудило напоминание
                 # Короткий сигнал не сбрасывает очередь микрофона: если команда
                 # сказана сразу после «Джарвис», она попадёт в запись целиком.
                 if cfg.get("assistant.wake_feedback", "beep") == "voice":
@@ -181,6 +217,7 @@ class App:
 
     def quit(self) -> None:
         self.stop_event.set()
+        self.wake_interrupt.set()
         self.speaker.interrupt()
 
     def _speak(self, mic, text: str) -> None:
@@ -244,7 +281,7 @@ class App:
                 mic.mute()
                 return
             if reply.action == EXIT:
-                self.stop_event.set()
+                self.quit()
                 return
             if not reply.expect_followup:
                 return
@@ -265,6 +302,7 @@ class App:
         threading.Thread(target=loop, daemon=True, name="console").start()
 
     def close(self) -> None:
+        self.reminders.stop()
         self.memory.close()
 
 

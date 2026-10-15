@@ -35,3 +35,23 @@ def test_matches(m, phrase, intent):
 ])
 def test_no_match(m, phrase):
     assert m.match(phrase) is None
+
+
+@pytest.mark.parametrize("phrase,intent", [
+    ("Поставь таймер на 5 минут", Intent("set_timer", {"seconds": 300})),
+    ("таймер на полчаса", Intent("set_timer", {"seconds": 1800})),
+    ("Напомни через 10 минут позвонить маме",
+     Intent("set_reminder", {"text": "позвонить маме", "minutes": 10})),
+    ("напомни мне через двадцать пять минут, что надо выключить плиту",
+     Intent("set_reminder", {"text": "надо выключить плиту", "minutes": 25})),
+    ("Напомни в 18:30 забрать посылку",
+     Intent("set_reminder", {"text": "забрать посылку", "at_time": "18:30"})),
+    ("какие напоминания", Intent("list_reminders")),
+    ("отмени таймер", Intent("cancel_reminders")),
+])
+def test_reminder_intents(m, phrase, intent):
+    assert m.match(phrase) == intent
+
+
+def test_timer_without_duration_goes_to_llm(m):
+    assert m.match("поставь таймер на варку яиц") is None

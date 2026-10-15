@@ -16,6 +16,13 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS reminders (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    text    TEXT NOT NULL,
+    kind    TEXT NOT NULL DEFAULT 'reminder',
+    due_at  REAL NOT NULL,
+    done    INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS facts (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     text       TEXT NOT NULL UNIQUE,
@@ -45,6 +52,16 @@ class Memory:
 
     def close(self) -> None:
         self._db.close()
+
+    def execute(self, sql: str, params: tuple = ()) -> list[tuple]:
+        """Запрос под общей блокировкой (для модулей, хранящих данные в той же БД)."""
+        with self._lock:
+            cur = self._db.execute(sql, params)
+            rows = cur.fetchall()
+            self._db.commit()
+            self.last_rowcount = cur.rowcount
+            self.last_rowid = cur.lastrowid
+            return rows
 
     # --- настройки ---
     def get_setting(self, key: str, default: Any = None) -> Any:
