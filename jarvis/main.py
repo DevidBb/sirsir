@@ -415,6 +415,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true", help="только проверить компоненты")
     parser.add_argument("--skip-check", action="store_true", help="не проверять при запуске")
     parser.add_argument("--tray", action="store_true", help="значок в области уведомлений")
+    parser.add_argument("--setup-mic", action="store_true",
+                        help="выбрать и проверить микрофон")
     parser.add_argument("--report", action="store_true",
                         help="собрать диагностический отчёт в data/report.txt")
     parser.add_argument("--autostart", choices=["on", "off", "status"],
@@ -446,6 +448,9 @@ def main(argv: list[str] | None = None) -> int:
     voice = not args.text
     setup_logging(config, args.verbose)
     setup_audit_log(config)
+    if args.setup_mic:
+        from . import mic_setup
+        return mic_setup.run(config)
     if args.report:
         from . import report
         path = report.write(config)
