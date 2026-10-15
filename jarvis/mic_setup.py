@@ -98,7 +98,9 @@ def run(config: Config) -> int:
         print(f"  {'*' if i == default else ' '}{i:3}: {name}  [{api}, {rate} Гц]")
     choice = input("\nНомер микрофона (Enter — отмеченный *): ").strip()
     device = int(choice) if choice.isdigit() else None
-    name = next((n for i, n, _, _ in devices if i == (device if device is not None else default)), "")
+    chosen = next(((n, api) for i, n, api, _ in devices
+                   if i == (device if device is not None else default)), ("", ""))
+    name = chosen[0]
 
     input("\nШаг 1. Помолчите 3 секунды. Нажмите Enter и молчите…")
     noise = _record(sd, device, 3)
@@ -116,7 +118,8 @@ def run(config: Config) -> int:
     if input(f"\nСохранить микрофон «{name}»? [Y/n] ").strip().lower() in ("", "y", "д", "да"):
         from .memory import Memory
         mem = Memory(config.path("memory.db_path"))
-        mem.set_setting("audio.input_device", name if device is not None else "")
+        # «имя|интерфейс»: индексы в Windows меняются, имена повторяются в MME/WASAPI.
+        mem.set_setting("audio.input_device", f"{chosen[0]}|{chosen[1]}" if device is not None else "")
         mem.close()
         print("Сохранено. Запускайте помощника: run.bat")
     return 0

@@ -111,7 +111,8 @@ def check_gpu() -> CheckResult:
 def check_microphone(config: Config) -> CheckResult:
     try:
         import sounddevice as sd  # type: ignore
-        dev = config.get("audio.input_device") or None
+        from .audio_input import resolve_device
+        dev = resolve_device(sd, config.get("audio.input_device") or None)
         info = sd.query_devices(dev, "input")
         return CheckResult("микрофон", True, info["name"])
     except Exception as e:

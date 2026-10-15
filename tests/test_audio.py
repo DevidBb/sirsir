@@ -107,3 +107,29 @@ def test_microphone_falls_back_to_native_rate(monkeypatch):
     mic._stream.callback(np.ones((1440, 1), np.int16) * 1000, 1440, None, None)
     block = next(mic.blocks())
     assert len(block) == 480 and block[0] == 1000
+
+
+class FakeSD:
+    @staticmethod
+    def query_hostapis():
+        return [{"name": "MME"}, {"name": "Windows WASAPI"}]
+
+    @staticmethod
+    def query_devices():
+        return [{"name": "Динамики", "max_input_channels": 0, "hostapi": 0},
+                {"name": "Микрофон (USB Audio)", "max_input_channels": 1, "hostapi": 1},
+                {"name": "Микрофон (USB Audio)", "max_input_channels": 1, "hostapi": 0},
+                {"name": "Микрофон (Realtek High Definition Audio)", "max_input_channels": 2, "hostapi": 1},
+                {"name": "Микрофон (Realtek High Defini", "max_input_channels": 2, "hostapi": 0}]
+
+
+def test_resolve_device():
+    from jarvis.audio_input import resolve_device
+    assert resolve_device(FakeSD, "") is None
+    assert resolve_device(FakeSD, "3") == 3
+    assert resolve_device(FakeSD, "Микрофон (USB Audio)|Windows WASAPI") == 1
+    assert resolve_device(FakeSD, "Микрофон (USB Audio)|MME") == 2
+    assert resolve_device(FakeSD, "Микрофон (USB Audio)") == 1   # имя без интерфейса — первое точное
+    # MME обрезает имя до 31 символа — находим по частичному совпадению, предпочитая MME
+    assert resolve_device(FakeSD, "Микрофон (Realtek High Definition Audio)|DirectSound") == 4
+    assert resolve_device(FakeSD, "Гарнитура|MME") is None

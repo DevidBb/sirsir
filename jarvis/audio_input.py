@@ -102,6 +102,35 @@ def resample(block: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
     return y.astype(dtype)
 
 
+def resolve_device(sd, spec: str | int | None) -> int | None:
+    """Находит индекс микрофона по сохранённому описанию «имя|интерфейс».
+
+    В Windows одно устройство видно через MME, DirectSound и WASAPI под одним
+    именем, а индексы меняются после перезагрузки — поэтому ищем по имени и
+    интерфейсу, затем только по имени (предпочитая MME), иначе — по умолчанию.
+    """
+    if spec in (None, ""):
+        return None
+    if isinstance(spec, int) or (isinstance(spec, str) and spec.isdigit()):
+        return int(spec)
+    name, _, api = str(spec).partition("|")
+    hostapis = sd.query_hostapis()
+    inputs = [(i, d) for i, d in enumerate(sd.query_devices()) if d["max_input_channels"] > 0]
+
+    def api_name(d):
+        return hostapis[d["hostapi"]]["name"]
+    for i, d in inputs:
+        if d["name"] == name and (not api or api_name(d) == api):
+            return i
+    candidates = [(i, d) for i, d in inputs if name.lower() in d["name"].lower()
+                  or d["name"].lower() in name.lower()]
+    candidates.sort(key=lambda c: api_name(c[1]) != "MME")
+    if candidates:
+        return candidates[0][0]
+    log.warning("Микрофон «%s» не найден, использую микрофон по умолчанию", spec)
+    return None
+
+
 class Microphone:
     """Поток int16 моно-блоков с микрофона через sounddevice."""
 
@@ -136,6 +165,8 @@ class Microphone:
 
     def start(self) -> None:
         import sounddevice as sd  # импорт здесь: модуль нужен только с микрофоном
+        if isinstance(self.device, str):
+            self.device = resolve_device(sd, self.device)
         try:
             self._stream = sd.InputStream(samplerate=self.sample_rate, channels=1, dtype="int16",
                                           blocksize=self.block_size, device=self.device,
