@@ -23,8 +23,11 @@ from .fuzzy import similarity, translit
 from .security import normalize
 
 SCRIPT_EXTS = {".bat", ".cmd", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
-               ".hta", ".scr", ".pif", ".com", ".reg", ".msc", ".cpl", ".jar", ".lnk", ".url"}
-PROGRAM_EXTS = {".exe", ".msi", ".msix", ".appx", ".appinstaller", ".application", ".appref-ms"}
+               ".hta", ".scr", ".pif", ".com", ".reg", ".jar", ".lnk", ".url"}
+# Программы и оснастки (.msc — «Управление компьютером» и т.п.): из меню «Пуск» можно,
+# если лежат не в загрузках/temp; из папок пользователя не открываются никогда.
+PROGRAM_EXTS = {".exe", ".msi", ".msix", ".appx", ".appinstaller", ".application", ".appref-ms",
+                ".msc", ".cpl"}
 RISKY_DIR_NAMES = {"downloads", "загрузки", "temp", "tmp", "inetcache", "temporary internet files"}
 SCRIPT_HOSTS = {"cmd.exe", "powershell.exe", "pwsh.exe", "wscript.exe", "cscript.exe", "mshta.exe",
                 "rundll32.exe", "regsvr32.exe", "bash.exe", "wsl.exe"}

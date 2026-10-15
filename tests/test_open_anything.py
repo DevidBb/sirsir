@@ -61,6 +61,8 @@ def test_parse_lnk_and_safety():
     assert unsafe_target_reason(r"C:\Tools\run.bat")
     assert unsafe_target_reason(r"C:\Tools\a.ps1")
     assert unsafe_target_reason(r"C:\Tools\a.vbs")
+    assert unsafe_target_reason(r"C:\Windows\system32\compmgmt.msc") is None
+    assert unsafe_target_reason(r"C:\Users\me\Downloads\evil.msc")
     assert unsafe_target_reason(r"C:\Windows\System32\cmd.exe", "/c del *")
     assert unsafe_target_reason(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe") is None
     assert parse_url_file("[InternetShortcut]\nURL=steam://rungameid/570\n") == "steam://rungameid/570"
