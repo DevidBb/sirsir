@@ -377,6 +377,24 @@ class App:
         self.memory.close()
 
 
+def setup_logging(config: Config, verbose: bool) -> None:
+    """Консоль — только важное (INFO с -v); файл — всегда подробно, для диагностики."""
+    from logging.handlers import RotatingFileHandler
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    console = logging.StreamHandler()
+    console.setLevel(logging.INFO if verbose else logging.WARNING)
+    console.setFormatter(fmt)
+    root.addHandler(console)
+    path = config.path("assistant.log_file")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handler = RotatingFileHandler(path, maxBytes=2_000_000, backupCount=2, encoding="utf-8")
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(fmt)
+    root.addHandler(handler)
+
+
 def setup_audit_log(config: Config) -> None:
     """Журнал действий: что и с какими аргументами выполнялось (без записи звука)."""
     from logging.handlers import RotatingFileHandler
@@ -397,13 +415,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true", help="только проверить компоненты")
     parser.add_argument("--skip-check", action="store_true", help="не проверять при запуске")
     parser.add_argument("--tray", action="store_true", help="значок в области уведомлений")
+    parser.add_argument("--report", action="store_true",
+                        help="собрать диагностический отчёт в data/report.txt")
     parser.add_argument("--autostart", choices=["on", "off", "status"],
                         help="автозапуск при входе в Windows")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
-    logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
-                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     # Модели только локальные: запрещаем библиотекам ходить в интернет.
@@ -426,7 +444,16 @@ def main(argv: list[str] | None = None) -> int:
 
     config = Config.load(args.config)
     voice = not args.text
+    setup_logging(config, args.verbose)
     setup_audit_log(config)
+    if args.report:
+        from . import report
+        path = report.write(config)
+        print(f"Отчёт сохранён: {path}\nПроверьте содержимое и пришлите файл разработчику.")
+        return 0
+    import platform as _platform
+    log.info("Запуск JARVIS: %s, Python %s, режим %s", _platform.platform(),
+             sys.version.split()[0], "голос" if voice else "текст")
 
     if args.check or not args.skip_check:
         ok = checks.report(checks.run_all(config, voice=voice))

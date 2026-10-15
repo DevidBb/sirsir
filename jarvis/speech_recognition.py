@@ -10,7 +10,9 @@ Whisper обучен на субтитрах и на шуме/тишине «д�
 from __future__ import annotations
 
 import logging
+import os
 import re
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -38,6 +40,33 @@ def is_hallucination(text: str) -> bool:
     return norm in HALLUCINATION_EXACT
 
 
+def add_nvidia_dll_dirs() -> list[str]:
+    """Windows: сделать видимыми DLL cuBLAS/cuDNN из pip-пакетов nvidia-*.
+
+    pip кладёт их в site-packages/nvidia/<пакет>/bin, где Windows их не ищет.
+    Без этого CTranslate2 не находит cudnn_ops64_9.dll и в некоторых версиях
+    аварийно завершает процесс (это нельзя перехватить в Python).
+    """
+    if sys.platform != "win32":
+        return []
+    added = []
+    for base in map(Path, sys.path):
+        nvidia = base / "nvidia"
+        if not nvidia.is_dir():
+            continue
+        for bin_dir in nvidia.glob("*/bin"):
+            if bin_dir.is_dir() and str(bin_dir) not in added:
+                try:
+                    os.add_dll_directory(str(bin_dir))  # type: ignore[attr-defined]
+                except OSError:
+                    continue
+                os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
+                added.append(str(bin_dir))
+    if added:
+        log.info("Добавлены пути к библиотекам CUDA: %s", ", ".join(added))
+    return added
+
+
 class SpeechRecognizer:
     def __init__(self, model: str = "small", device: str = "cuda",
                  compute_type_gpu: str = "float16", compute_type_cpu: str = "int8",
@@ -55,6 +84,8 @@ class SpeechRecognizer:
         self.device: str | None = None
 
     def _load(self, device: str):
+        if device == "cuda":
+            add_nvidia_dll_dirs()
         from faster_whisper import WhisperModel  # тяжёлый импорт — по требованию
         compute = self.compute_type_gpu if device == "cuda" else self.compute_type_cpu
         model = WhisperModel(self.model_name, device=device, compute_type=compute,

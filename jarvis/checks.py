@@ -98,6 +98,8 @@ def check_gpu() -> CheckResult:
         return CheckResult("GPU NVIDIA", False, "nvidia-smi не найден — Whisper будет работать на CPU",
                            required=False)
     try:
+        from .speech_recognition import add_nvidia_dll_dirs
+        add_nvidia_dll_dirs()
         import ctranslate2  # type: ignore
         n = ctranslate2.get_cuda_device_count()
         return CheckResult("GPU NVIDIA", n > 0, f"CUDA-устройств: {n}" if n else

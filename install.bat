@@ -9,6 +9,17 @@ if errorlevel 1 (
     pause & exit /b 1
 )
 
+python -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)"
+if errorlevel 1 (
+    echo Нужен Python 3.11 или новее. Рекомендуется 3.12 с python.org.
+    pause & exit /b 1
+)
+python -c "import sys; sys.exit(0 if sys.version_info[:2] <= (3, 13) else 1)"
+if errorlevel 1 (
+    echo Внимание: для самой новой версии Python часть библиотек может не иметь готовых пакетов.
+    echo Если установка упадёт, поставьте Python 3.12 с python.org.
+)
+
 if not exist .venv (
     echo Создаю виртуальное окружение...
     python -m venv .venv || (pause & exit /b 1)

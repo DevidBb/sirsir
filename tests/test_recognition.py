@@ -81,3 +81,24 @@ def test_trigger_words_not_used_as_distractors(fake_vosk):
 def test_no_usable_phrase_is_an_error(fake_vosk):
     with pytest.raises(ValueError):
         make(["джарвиз"])
+
+
+def test_nvidia_dll_dirs(tmp_path, monkeypatch):
+    import os
+    from jarvis import speech_recognition as sr
+    for pkg in ("cublas", "cudnn"):
+        (tmp_path / "nvidia" / pkg / "bin").mkdir(parents=True)
+    added_dirs = []
+    monkeypatch.setattr(sr.sys, "platform", "win32")
+    monkeypatch.setattr(sr.sys, "path", [str(tmp_path)])
+    monkeypatch.setattr(os, "add_dll_directory", added_dirs.append, raising=False)
+    monkeypatch.setenv("PATH", "orig")
+    added = sr.add_nvidia_dll_dirs()
+    assert len(added) == 2 and sorted(added) == sorted(added_dirs)
+    assert os.environ["PATH"].endswith("orig") and "cudnn" in os.environ["PATH"]
+
+
+def test_nvidia_dll_dirs_noop_elsewhere(monkeypatch):
+    from jarvis import speech_recognition as sr
+    monkeypatch.setattr(sr.sys, "platform", "linux")
+    assert sr.add_nvidia_dll_dirs() == []

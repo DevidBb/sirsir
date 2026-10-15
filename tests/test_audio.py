@@ -66,3 +66,44 @@ def test_beep_tone_is_short_and_quiet():
     assert tone.dtype == np.float32 and len(tone) == 2205
     assert np.abs(tone).max() <= 0.25 and abs(tone[0]) < 0.01
     assert split_sentences("Раз. Два! Три?") == ["Раз.", "Два!", "Три?"]
+
+
+def test_resample_rates():
+    from jarvis.audio_input import resample
+    t48 = np.arange(1440) / 48000
+    tone = (0.3 * np.sin(2 * np.pi * 440 * t48) * 32767).astype(np.int16)
+    out = resample(tone, 48000, 16000)
+    assert out.dtype == np.int16 and len(out) == 480
+    ref = 0.3 * np.sin(2 * np.pi * 440 * (np.arange(480) / 16000)) * 32767
+    assert np.abs(out.astype(float) - ref).max() < 0.05 * 32767   # форма сохранилась
+    assert len(resample(np.zeros(1323, np.int16), 44100, 16000)) == 480
+    # высокочастотный шум 20 кГц при 48→16 кГц почти гасится усреднением
+    hf = (0.3 * np.sin(2 * np.pi * 20000 * t48) * 32767).astype(np.int16)
+    assert np.abs(resample(hf, 48000, 16000)).max() < 0.15 * 32767
+
+
+def test_microphone_falls_back_to_native_rate(monkeypatch):
+    import sys
+    import types
+    from jarvis.audio_input import Microphone
+    opened = []
+
+    class Stream:
+        def __init__(self, samplerate, blocksize, callback, **kw):
+            if samplerate == 16000:
+                raise RuntimeError("Invalid sample rate")
+            opened.append((samplerate, blocksize))
+            self.callback = callback
+
+        def start(self):
+            pass
+
+    fake_sd = types.SimpleNamespace(InputStream=Stream,
+                                    query_devices=lambda dev, kind: {"default_samplerate": 48000.0})
+    monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
+    mic = Microphone(16000, 30)
+    mic.start()
+    assert opened == [(48000, 1440)] and mic.native_rate == 48000
+    mic._stream.callback(np.ones((1440, 1), np.int16) * 1000, 1440, None, None)
+    block = next(mic.blocks())
+    assert len(block) == 480 and block[0] == 1000

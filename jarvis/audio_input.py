@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 import time
@@ -12,6 +13,8 @@ from dataclasses import dataclass
 from typing import Iterator
 
 import numpy as np
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -82,6 +85,23 @@ class EndpointDetector:
         return "continue"
 
 
+def resample(block: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
+    """Пересчёт частоты для речи. Кратные частоты (48→16 кГц) — усреднением
+    (заодно гасит частоты выше новой границы), прочие — линейной интерполяцией."""
+    if src_rate == dst_rate or block.size == 0:
+        return block
+    dtype = block.dtype
+    x = block.astype(np.float32)
+    if src_rate % dst_rate == 0:
+        k = src_rate // dst_rate
+        n = len(x) // k
+        y = x[: n * k].reshape(n, k).mean(axis=1)
+    else:
+        n = int(round(len(x) * dst_rate / src_rate))
+        y = np.interp(np.linspace(0, len(x) - 1, n), np.arange(len(x)), x)
+    return y.astype(dtype)
+
+
 class Microphone:
     """Поток int16 моно-блоков с микрофона через sounddevice."""
 
@@ -93,6 +113,7 @@ class Microphone:
         self._stream = None
         self._muted = threading.Event()
         self.error: str | None = None
+        self.native_rate: int | None = None  # если устройство не умеет sample_rate
 
     @staticmethod
     def _parse_device(device):
@@ -105,16 +126,33 @@ class Microphone:
     def _callback(self, indata, frames, time_info, status) -> None:
         if self._muted.is_set():
             return
+        block = indata[:, 0].copy()
+        if self.native_rate:
+            block = resample(block, self.native_rate, self.sample_rate)
         try:
-            self._queue.put_nowait(indata[:, 0].copy())
+            self._queue.put_nowait(block)
         except queue.Full:
             pass  # потребитель не успевает — старые данные не нужны
 
     def start(self) -> None:
         import sounddevice as sd  # импорт здесь: модуль нужен только с микрофоном
-        self._stream = sd.InputStream(samplerate=self.sample_rate, channels=1, dtype="int16",
-                                      blocksize=self.block_size, device=self.device,
-                                      callback=self._callback)
+        try:
+            self._stream = sd.InputStream(samplerate=self.sample_rate, channels=1, dtype="int16",
+                                          blocksize=self.block_size, device=self.device,
+                                          callback=self._callback)
+        except Exception as e:
+            # Некоторые устройства (WASAPI) не умеют 16 кГц — пишем на родной
+            # частоте устройства и пересчитываем сами.
+            info = sd.query_devices(self.device, "input")
+            native = int(info["default_samplerate"])
+            if native == self.sample_rate:
+                raise
+            log.warning("Микрофон не поддерживает %d Гц (%s), записываю на %d Гц с пересчётом",
+                        self.sample_rate, e, native)
+            self.native_rate = native
+            self._stream = sd.InputStream(samplerate=native, channels=1, dtype="int16",
+                                          blocksize=int(native * self.block_size / self.sample_rate),
+                                          device=self.device, callback=self._callback)
         self._stream.start()
 
     def stop(self) -> None:
