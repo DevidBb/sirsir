@@ -28,9 +28,12 @@ log = logging.getLogger("jarvis")
 
 
 class App:
-    def __init__(self, config: Config, voice: bool):
+    def __init__(self, config: Config, voice: bool, tray: bool = False):
         self.config = config
         self.voice = voice
+        self.use_tray = tray
+        self.tray = None
+        self.mic = None
         self.stop_event = threading.Event()
         self.memory = Memory(config.path("memory.db_path"), int(config.get("memory.max_facts", 200)))
         self._apply_saved_settings()
@@ -123,15 +126,22 @@ class App:
 
         mic = Microphone(sr, vad.block_ms, cfg.get("audio.input_device") or None)
         mic.start()
-        self._start_console(mic)
+        self.mic = mic
+        self._start_console()
+        if self.use_tray:
+            from .tray import Tray
+            self.tray = Tray(self.toggle_mic, lambda: mic.muted, self.emergency_stop, self.quit)
+            self.tray.start()
         self.speaker.say(f"{cfg.get('assistant.name', 'Джарвис')} готов.")
         print("Скажите «Джарвис». Enter — вкл/выкл микрофон, s+Enter — стоп, q+Enter — выход.")
 
         try:
             while not self.stop_event.is_set():
                 if mic.muted:
+                    self._state("muted")
                     self.stop_event.wait(0.3)
                     continue
+                self._state("idle")
                 if not wake.wait(mic.blocks(self.stop_event)):
                     if mic.error:
                         print(f"{mic.error}. Помощник остановлен.")
@@ -146,8 +156,35 @@ class App:
                 wake.reset()
         finally:
             mic.stop()
+            if self.tray:
+                self.tray.stop()
+
+    # --- управление из консоли и трея ---
+    def _state(self, state: str) -> None:
+        if self.tray:
+            self.tray.set_state(state)
+
+    def toggle_mic(self) -> None:
+        if self.mic is None:
+            return
+        if self.mic.muted:
+            self.mic.unmute()
+            print("Микрофон включён.", flush=True)
+        else:
+            self.mic.mute()
+            print("Микрофон выключен.", flush=True)
+
+    def emergency_stop(self) -> None:
+        self.speaker.interrupt()
+        self.assistant.handle(self.assistant.emergency.phrases[0])
+        print("Аварийная остановка.", flush=True)
+
+    def quit(self) -> None:
+        self.stop_event.set()
+        self.speaker.interrupt()
 
     def _speak(self, mic, text: str) -> None:
+        self._state("speaking")
         detector = getattr(self, "stop_detector", None)
         if detector is None or mic.muted:
             # Микрофон выключен на время речи, чтобы помощник не слышал сам себя.
@@ -189,6 +226,7 @@ class App:
                     return
                 cfg = type(vad)(**{**vad.__dict__, "no_speech_timeout_seconds": follow})
             first = False
+            self._state("listening")
             audio = record_command(mic.blocks(self.stop_event), cfg)
             if audio is None:
                 return
@@ -211,27 +249,19 @@ class App:
             if not reply.expect_followup:
                 return
 
-    def _start_console(self, mic) -> None:
+    def _start_console(self) -> None:
         def loop() -> None:
             while not self.stop_event.is_set():
                 try:
                     cmd = input().strip().lower()
-                except (EOFError, KeyboardInterrupt):
+                except (EOFError, KeyboardInterrupt, RuntimeError):
                     return
                 if cmd == "q":
-                    self.stop_event.set()
-                    self.speaker.interrupt()
+                    self.quit()
                 elif cmd == "s":
-                    self.speaker.interrupt()
-                    self.assistant.handle(self.assistant.emergency.phrases[0])
-                    print("Аварийная остановка.")
+                    self.emergency_stop()
                 else:
-                    if mic.muted:
-                        mic.unmute()
-                        print("Микрофон включён.")
-                    else:
-                        mic.mute()
-                        print("Микрофон выключен.")
+                    self.toggle_mic()
         threading.Thread(target=loop, daemon=True, name="console").start()
 
     def close(self) -> None:
@@ -257,6 +287,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--text", action="store_true", help="текстовый режим без микрофона")
     parser.add_argument("--check", action="store_true", help="только проверить компоненты")
     parser.add_argument("--skip-check", action="store_true", help="не проверять при запуске")
+    parser.add_argument("--tray", action="store_true", help="значок в области уведомлений")
+    parser.add_argument("--autostart", choices=["on", "off", "status"],
+                        help="автозапуск при входе в Windows")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -267,6 +300,20 @@ def main(argv: list[str] | None = None) -> int:
     # Модели только локальные: запрещаем библиотекам ходить в интернет.
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
+    if args.autostart:
+        from . import autostart
+        try:
+            if args.autostart == "on":
+                print(f"Автозапуск включён: {autostart.enable()}")
+            elif args.autostart == "off":
+                print("Автозапуск выключен." if autostart.disable() else "Автозапуск и так выключен.")
+            else:
+                print("Автозапуск включён." if autostart.is_enabled() else "Автозапуск выключен.")
+        except OSError as e:
+            print(e)
+            return 1
+        return 0
 
     config = Config.load(args.config)
     voice = not args.text
@@ -281,7 +328,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     NetworkGuard(config.get("security.allowed_hosts", ["127.0.0.1", "localhost"])).install()
-    app = App(config, voice)
+    app = App(config, voice, tray=args.tray)
     try:
         app.run_voice() if voice else app.run_text()
     except KeyboardInterrupt:

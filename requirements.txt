@@ -11,6 +11,8 @@ pyttsx3>=2.90             # синтез речи через голоса Window
 psutil>=5.9
 Send2Trash>=1.8           # удаление только в корзину
 PyGetWindow>=0.0.9; sys_platform == "win32"
+pystray>=0.19           # значок в трее
+Pillow>=10              # картинка значка
 
 # Для faster-whisper на GPU (RTX 3060): CUDA 12 + cuDNN 9 из pip
 nvidia-cublas-cu12; sys_platform == "win32"
