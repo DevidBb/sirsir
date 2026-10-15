@@ -311,6 +311,8 @@ class Assistant:
             except Exception as e:  # действие не должно ронять помощника
                 log.exception("Ошибка инструмента %s", name)
                 result = f"Не удалось выполнить действие: {e}"
+            if not isinstance(result, str):  # None или число от обработчика не должны ронять ответ
+                result = "Готово." if result is None else str(result)
             audit.info("%s %s -> %s", name, json.dumps(clean, ensure_ascii=False), result[:200])
             return result
 

@@ -265,3 +265,11 @@ def test_stop_word_inside_request_still_goes_to_llm(config):
     a = build(config, [text("Хорошо.")])
     assert a.handle("хватит ли мне денег на отпуск").text == "Хорошо."
     assert len(a.fake.requests) == 1
+
+
+def test_tool_returning_none_does_not_crash(config):
+    from jarvis.tool_registry import Tool
+    a = build(config, [tool_call("noop"), text("Сделал.")])
+    a.registry.register(Tool("noop", "Ничего не делает", lambda: None))
+    assert a.handle("сделай что-нибудь").text == "Сделал."
+    assert a.fake.requests[1]["messages"][-1]["content"] == "Готово."

@@ -156,17 +156,32 @@ class WindowsController:
         self.folders: dict[str, str] = config.get("windows.folders", {})
 
     # --- поиск по белым спискам ---
-    @staticmethod
-    def _lookup(name: str, table: dict[str, str]) -> tuple[str, str] | None:
+    # Частичное совпадение — только для осмысленных запросов: иначе «а» или пробел
+    # от модели запустили бы первое попавшееся приложение («а» входит в «калькулятор»).
+    MIN_PARTIAL_LEN = 3
+
+    @classmethod
+    def _lookup(cls, name: str, table: dict[str, str]) -> tuple[str, str] | None:
         q = normalize(name)
+        if not q:
+            return None
         for key, value in table.items():
             if normalize(key) == q:
                 return key, value
         for key, value in table.items():
             k = normalize(key)
-            if k in q or q in k:
+            if not k:
+                continue
+            if (len(k) >= cls.MIN_PARTIAL_LEN and k in q) or (len(q) >= cls.MIN_PARTIAL_LEN and q in k):
                 return key, value
         return None
+
+    @staticmethod
+    def _launch_error(key: str, target: str, section: str, error: OSError) -> str:
+        if isinstance(error, FileNotFoundError):
+            return (f"Не удалось открыть {key}: «{target}» не найден на этом компьютере. "
+                    f"Проверьте путь в config.toml, раздел [{section}].")
+        return f"Не удалось открыть {key}: {error.strerror or error}."
 
     # --- приложения и сайты ---
     def open_app(self, name: str) -> str:
@@ -174,7 +189,10 @@ class WindowsController:
         if not found:
             return f"Приложение «{name}» не в списке разрешённых. Доступны: {', '.join(self.apps)}."
         key, command = found
-        self.launch(command)
+        try:
+            self.launch(command)
+        except OSError as e:
+            return self._launch_error(key, command, "windows.apps", e)
         return f"Запускаю {key}."
 
     def open_website(self, name: str) -> str:
@@ -184,7 +202,12 @@ class WindowsController:
         key, url = found
         if not url.startswith(("https://", "http://")):
             return f"Адрес сайта {key} в настройках некорректен."
-        self.open_url(url)
+        try:
+            opened = self.open_url(url)
+        except OSError as e:
+            return self._launch_error(key, url, "windows.websites", e)
+        if opened is False:  # webbrowser.open: браузер не найден
+            return "Не удалось открыть сайт: браузер по умолчанию не найден."
         return f"Открываю {key}."
 
     # --- папки ---
@@ -196,7 +219,10 @@ class WindowsController:
         path = Path(raw).expanduser()
         if not path.is_dir():
             return f"Папка {key} не найдена на диске."
-        self.launch(str(path))
+        try:
+            self.launch(str(path))
+        except OSError as e:
+            return self._launch_error(key, str(path), "windows.folders", e)
         return f"Открываю папку {key}."
 
     # --- питание ---

@@ -139,3 +139,31 @@ def test_pygetwindow_false_error_is_success():
     b = WindowBackend()
     b._gw = GW
     assert b.act("блокнот", "focus") == "Блокнот"
+
+
+@pytest.mark.parametrize("name", [" ", "а", "к", "ло", "!"])
+def test_short_name_does_not_launch_random_app(ctl, name):
+    # Модель иногда присылает огрызок имени: он не должен запускать первое попавшееся.
+    assert "не в списке" in ctl.open_app(name)
+    assert "не в списке" in ctl.open_website(name)
+    assert ctl.launched == [] and ctl.opened == []
+
+
+def test_partial_name_still_works(ctl):
+    assert ctl.open_app("блокнот пожалуйста") == "Запускаю блокнот."
+    assert ctl.open_app("блокн") == "Запускаю блокнот."
+    assert ctl.launched == ["notepad.exe", "notepad.exe"]
+
+
+def test_missing_program_gives_clear_message(config):
+    def launcher(command):
+        raise FileNotFoundError(2, "Не удается найти указанный файл", command)
+
+    c = WindowsController(config, launcher=launcher)
+    reply = c.open_app("блокнот")
+    assert "не найден" in reply and "[windows.apps]" in reply and "Errno" not in reply
+
+
+def test_browser_missing(config):
+    c = WindowsController(config, url_opener=lambda url: False)
+    assert "браузер" in c.open_website("ютуб")
