@@ -119,3 +119,23 @@ def test_current_time_is_speakable():
     import datetime as dt
     assert WindowsController.current_time(dt.datetime(2026, 10, 15, 9, 5)) == \
         "Сейчас 09:05, 15 октября, четверг."
+
+
+def test_pygetwindow_false_error_is_success():
+    from jarvis.windows_control import WindowBackend
+
+    class Win:
+        title = "Блокнот"
+        isMinimized = False
+
+        def activate(self):
+            raise Exception("Error code from Windows: 0 - Операция успешно завершена.")
+
+    class GW:
+        @staticmethod
+        def getAllWindows():
+            return [Win()]
+
+    b = WindowBackend()
+    b._gw = GW
+    assert b.act("блокнот", "focus") == "Блокнот"

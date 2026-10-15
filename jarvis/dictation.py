@@ -74,13 +74,23 @@ def _send_unicode(text: str) -> None:
     KEYEVENTF_UNICODE = 0x0004
     KEYEVENTF_KEYUP = 0x0002
 
+    ULONG_PTR = ctypes.c_size_t
+
     class KEYBDINPUT(ctypes.Structure):
         _fields_ = [("wVk", wintypes.WORD), ("wScan", wintypes.WORD), ("dwFlags", wintypes.DWORD),
-                    ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+                    ("time", wintypes.DWORD), ("dwExtraInfo", ULONG_PTR)]
+
+    class MOUSEINPUT(ctypes.Structure):
+        _fields_ = [("dx", wintypes.LONG), ("dy", wintypes.LONG), ("mouseData", wintypes.DWORD),
+                    ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD), ("dwExtraInfo", ULONG_PTR)]
+
+    class HARDWAREINPUT(ctypes.Structure):
+        _fields_ = [("uMsg", wintypes.DWORD), ("wParamL", wintypes.WORD), ("wParamH", wintypes.WORD)]
 
     class _U(ctypes.Union):
-        # Самый большой член объединения — MOUSEINPUT; задаём размер с запасом.
-        _fields_ = [("ki", KEYBDINPUT), ("pad", ctypes.c_byte * 32)]
+        # Точное объединение из Windows API: размер INPUT должен совпасть с ожидаемым
+        # SendInput (40 байт на x64, 28 на x86), иначе ввод молча отклоняется.
+        _fields_ = [("ki", KEYBDINPUT), ("mi", MOUSEINPUT), ("hi", HARDWAREINPUT)]
 
     class INPUT(ctypes.Structure):
         _fields_ = [("type", wintypes.DWORD), ("u", _U)]

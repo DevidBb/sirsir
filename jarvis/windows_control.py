@@ -112,18 +112,24 @@ class WindowBackend:
         win = self.find(query)
         if win is None:
             return None
-        if action == "focus":
-            if win.isMinimized:
+        try:
+            if action == "focus":
+                if win.isMinimized:
+                    win.restore()
+                win.activate()
+            elif action == "minimize":
+                win.minimize()
+            elif action == "maximize":
+                win.maximize()
+            elif action == "restore":
                 win.restore()
-            win.activate()
-        elif action == "minimize":
-            win.minimize()
-        elif action == "maximize":
-            win.maximize()
-        elif action == "restore":
-            win.restore()
-        elif action == "close":
-            win.close()
+            elif action == "close":
+                win.close()
+        except Exception as e:
+            # Известная особенность pygetwindow: activate() бросает исключение с кодом 0
+            # («операция успешно завершена»), хотя окно переключилось.
+            if "Error code from Windows: 0" not in str(e):
+                raise
         return win.title
 
 
