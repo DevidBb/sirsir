@@ -13,6 +13,8 @@ import os
 import queue
 import sys
 import threading
+import time
+from dataclasses import dataclass
 from typing import Any
 
 from . import checks
@@ -27,6 +29,16 @@ from .tool_registry import ToolRegistry
 from .windows_control import WindowsController
 
 log = logging.getLogger("jarvis")
+
+
+@dataclass
+class VoiceParts:
+    mic: Any
+    wake: Any
+    stop_detector: Any
+    asr: Any
+    vad: Any
+    phrases: list[str]
 
 
 def make_speaker(config: Config, voice: bool = True) -> Speaker:
@@ -127,10 +139,11 @@ class App:
             self.respond(line)
 
     # --- голосовой режим ---
-    def run_voice(self) -> None:
-        from .audio_input import Microphone, VadConfig, record_command
+    def build_voice(self) -> VoiceParts:
+        """Загружает модели и открывает микрофон."""
+        from .audio_input import Microphone, VadConfig
         from .speech_recognition import SpeechRecognizer
-        from .wake_word import VoskWakeWord, strip_wake_phrase
+        from .wake_word import VoskWakeWord
 
         cfg = self.config
         sr = int(cfg.get("audio.sample_rate", 16000))
@@ -145,8 +158,8 @@ class App:
         wake = VoskWakeWord(cfg.path("wake_word.vosk_model_path"), phrases, sr)
         wake.load()
         # Детектор «стоп» на той же модели — слушает, пока помощник говорит.
-        self.stop_detector = (wake.with_phrases(cfg.get("assistant.interrupt_phrases", ["стоп"]))
-                              if cfg.get("assistant.barge_in", True) else None)
+        stop_detector = (wake.with_phrases(cfg.get("assistant.interrupt_phrases", ["стоп"]))
+                         if cfg.get("assistant.barge_in", True) else None)
         asr = SpeechRecognizer(cfg.get("speech_recognition.model", "small"),
                                cfg.get("speech_recognition.device", "cuda"),
                                cfg.get("speech_recognition.compute_type_gpu", "float16"),
@@ -156,50 +169,77 @@ class App:
                                int(cfg.get("speech_recognition.beam_size", 1)))
         print(f"Распознавание речи: {asr.load()}")
         self.speaker.load()
-
         mic = Microphone(sr, vad.block_ms, cfg.get("audio.input_device") or None)
         mic.start()
+        return VoiceParts(mic, wake, stop_detector, asr, vad, phrases)
+
+    def run_voice(self, parts: VoiceParts | None = None, console: bool = True) -> None:
+        parts = parts or self.build_voice()
+        mic = parts.mic
         self.mic = mic
-        self._start_console()
+        self.stop_detector = parts.stop_detector
+        if console:
+            self._start_console()
         if self.use_tray:
             from .tray import Tray
             self.tray = Tray(self.toggle_mic, lambda: mic.muted, self.emergency_stop, self.quit)
             self.tray.start()
         self.reminders.start(self._on_reminder)
-        self.speaker.say(f"{cfg.get('assistant.name', 'Джарвис')} готов.")
+        self.speaker.say(f"{self.config.get('assistant.name', 'Джарвис')} готов.")
         print("Скажите «Джарвис». Enter — вкл/выкл микрофон, s+Enter — стоп, q+Enter — выход.")
 
+        errors: list[float] = []
         try:
             while not self.stop_event.is_set():
-                if not self.notifications.empty():
-                    self._deliver_notifications()
-                if mic.muted:
-                    self._state("muted")
-                    self.wake_interrupt.wait(0.3)
-                    self.wake_interrupt.clear()
-                    continue
-                self._state("idle")
-                self.wake_interrupt.clear()
-                if not wake.wait(mic.blocks(self.wake_interrupt)):
-                    if self.stop_event.is_set():
+                try:
+                    if not self._voice_iteration(parts):
                         break
-                    if mic.error:
-                        print(f"{mic.error}. Помощник остановлен.")
+                except Exception:
+                    # Одна ошибка (драйвер, модель, инструмент) не должна ронять помощника,
+                    # но частые ошибки подряд — повод остановиться, а не крутиться впустую.
+                    log.exception("Ошибка в голосовом цикле")
+                    now = time.monotonic()
+                    errors = [t for t in errors if now - t < 60] + [now]
+                    if len(errors) >= 5:
+                        print("Слишком много ошибок подряд, помощник остановлен. Подробности в логе.")
                         break
-                    wake.reset()
-                    continue  # разбудило напоминание
-                # Короткий сигнал не сбрасывает очередь микрофона: если команда
-                # сказана сразу после «Джарвис», она попадёт в запись целиком.
-                if cfg.get("assistant.wake_feedback", "beep") == "voice":
-                    self._speak(mic, "Слушаю.")
-                else:
-                    play_beep()
-                self._dialog(mic, vad, asr, phrases, record_command, strip_wake_phrase)
-                wake.reset()
+                    self.speaker.say("Произошла ошибка, продолжаю работу.")
         finally:
             mic.stop()
             if self.tray:
                 self.tray.stop()
+
+    def _voice_iteration(self, parts: VoiceParts) -> bool:
+        """Одно ожидание «Джарвис» и диалог. False — пора завершаться."""
+        mic, wake = parts.mic, parts.wake
+        if not self.notifications.empty():
+            self._deliver_notifications()
+        if mic.muted:
+            self._state("muted")
+            self.wake_interrupt.wait(0.3)
+            self.wake_interrupt.clear()
+            return True
+        self._state("idle")
+        self.wake_interrupt.clear()
+        if not wake.wait(mic.blocks(self.wake_interrupt)):
+            if self.stop_event.is_set():
+                return False
+            if mic.error:
+                print(f"{mic.error}. Помощник остановлен.")
+                return False
+            wake.reset()
+            return True  # разбудило напоминание
+        # Короткий сигнал не сбрасывает очередь микрофона: если команда
+        # сказана сразу после «Джарвис», она попадёт в запись целиком.
+        if self.config.get("assistant.wake_feedback", "beep") == "voice":
+            self._speak(mic, "Слушаю.")
+        else:
+            play_beep()
+        try:
+            self._dialog(parts)
+        finally:
+            wake.reset()
+        return True
 
     # --- управление из консоли и трея ---
     def _state(self, state: str) -> None:
@@ -258,7 +298,10 @@ class App:
             watcher.join(timeout=1)
             mic.flush()  # отбрасываем эхо собственной речи
 
-    def _dialog(self, mic, vad, asr, phrases, record_command, strip_wake_phrase) -> None:
+    def _dialog(self, parts: VoiceParts) -> None:
+        from .audio_input import record_command
+        from .wake_word import strip_wake_phrase
+        mic, vad, asr, phrases = parts.mic, parts.vad, parts.asr, parts.phrases
         first = True
         while not self.stop_event.is_set() and not mic.muted:
             if first:

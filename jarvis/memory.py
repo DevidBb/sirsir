@@ -51,17 +51,23 @@ class Memory:
         self._db.commit()
 
     def close(self) -> None:
-        self._db.close()
+        # Под блокировкой: фоновые потоки (напоминания) не попадут в середину закрытия.
+        with self._lock:
+            self._db.close()
 
     def execute(self, sql: str, params: tuple = ()) -> list[tuple]:
         """Запрос под общей блокировкой (для модулей, хранящих данные в той же БД)."""
         with self._lock:
-            cur = self._db.execute(sql, params)
-            rows = cur.fetchall()
+            rows = self._db.execute(sql, params).fetchall()
             self._db.commit()
-            self.last_rowcount = cur.rowcount
-            self.last_rowid = cur.lastrowid
             return rows
+
+    def modify(self, sql: str, params: tuple = ()) -> int:
+        """Изменяющий запрос; возвращает число затронутых строк."""
+        with self._lock:
+            count = self._db.execute(sql, params).rowcount
+            self._db.commit()
+            return count
 
     # --- настройки ---
     def get_setting(self, key: str, default: Any = None) -> Any:

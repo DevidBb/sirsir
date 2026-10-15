@@ -147,16 +147,14 @@ class Reminders:
             "SELECT id, text, kind, due_at FROM reminders WHERE done=0 AND due_at<=? ORDER BY due_at",
             (now,))
         for rid, *_ in rows:
-            self.memory.execute("UPDATE reminders SET done=1 WHERE id=?", (rid,))
+            self.memory.modify("UPDATE reminders SET done=1 WHERE id=?", (rid,))
         return [(text, kind, due) for _, text, kind, due in rows]
 
     def cancel(self, fragment: str = "") -> int:
         if fragment:
-            self.memory.execute("UPDATE reminders SET done=1 WHERE done=0 AND text LIKE ?",
-                                (f"%{fragment}%",))
-        else:
-            self.memory.execute("UPDATE reminders SET done=1 WHERE done=0")
-        return self.memory.last_rowcount
+            return self.memory.modify("UPDATE reminders SET done=1 WHERE done=0 AND text LIKE ?",
+                                      (f"%{fragment}%",))
+        return self.memory.modify("UPDATE reminders SET done=1 WHERE done=0")
 
     def describe_pending(self) -> str:
         rows = self.pending()
@@ -189,6 +187,8 @@ class Reminders:
                     for text, kind, due in self.pop_due():
                         on_due(self.announcement(text, kind, due, now))
                 except Exception:
+                    if self._stop.is_set():
+                        return  # база закрывается — штатное завершение
                     log.exception("Ошибка проверки напоминаний")
 
         self._stop.clear()
@@ -197,6 +197,9 @@ class Reminders:
 
     def stop(self) -> None:
         self._stop.set()
+        if self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join(timeout=5)
+        self._thread = None
 
     # --- инструменты ---
     def register_tools(self, registry: ToolRegistry) -> None:
