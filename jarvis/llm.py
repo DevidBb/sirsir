@@ -289,3 +289,51 @@ class SentenceStream:
         if self._buf.strip() and not self.cancelled and not looks_like_tool_text(self._buf):
             self._emit(self._buf)
         self._buf = ""
+
+
+def find_ollama() -> str | None:
+    """Путь к ollama: PATH или стандартная установка Windows."""
+    import os
+    import shutil
+    from pathlib import Path
+    found = shutil.which("ollama")
+    if found:
+        return found
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        candidate = Path(local) / "Programs" / "Ollama" / "ollama.exe"
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def ensure_ollama(client: OllamaClient, wait_seconds: float = 20, popen=None,
+                  sleep=None) -> str:
+    """Если Ollama не отвечает — запустить `ollama serve` в фоне и дождаться.
+    Возвращает "running", "started" или "missing"/"failed"."""
+    import subprocess
+    import sys
+    import time
+    try:
+        client.list_models()
+        return "running"
+    except LLMError:
+        pass
+    exe = find_ollama()
+    if exe is None:
+        return "missing"
+    flags = 0
+    if sys.platform == "win32":  # без окна консоли и независимо от помощника
+        flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS  # type: ignore[attr-defined]
+    log.info("Ollama не запущена, запускаю: %s serve", exe)
+    (popen or subprocess.Popen)([exe, "serve"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, creationflags=flags)
+    deadline = time.monotonic() + wait_seconds
+    while time.monotonic() < deadline:
+        (sleep or time.sleep)(0.5)
+        try:
+            client.list_models()
+            return "started"
+        except LLMError:
+            continue
+    return "failed"

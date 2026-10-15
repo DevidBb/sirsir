@@ -65,6 +65,8 @@ timeout_seconds = 90
 keep_alive = "30m"
 # Загружать модель при запуске помощника (в фоне), а не при первом вопросе.
 preload = true
+# Если Ollama не запущена — запустить «ollama serve» автоматически.
+autostart_ollama = true
 max_tool_calls_per_turn = 3
 
 [tts]

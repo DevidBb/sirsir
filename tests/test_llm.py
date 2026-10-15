@@ -177,3 +177,51 @@ def test_preload(fake_ollama):
     assert client.preload()
     assert received[-1] == {"model": "qwen3:8b", "keep_alive": "30m"}
     assert not OllamaClient("http://127.0.0.1:9", "qwen3:8b", timeout=1).preload()
+
+
+def test_ensure_ollama_already_running(fake_ollama):
+    from jarvis.llm import ensure_ollama
+    url, _ = fake_ollama
+    started = []
+    assert ensure_ollama(OllamaClient(url, "m"), popen=lambda *a, **k: started.append(a)) == "running"
+    assert started == []
+
+
+def test_ensure_ollama_starts_server(monkeypatch, tmp_path):
+    from jarvis import llm
+    exe = tmp_path / "ollama"
+    exe.write_text("")
+    monkeypatch.setattr(llm, "find_ollama", lambda: str(exe))
+    client = OllamaClient("http://127.0.0.1:9", "m", timeout=1)
+    state = {"up": False}
+
+    def fake_list():
+        if not state["up"]:
+            raise llm.LLMError("down")
+        return []
+
+    monkeypatch.setattr(client, "list_models", fake_list)
+    calls = []
+
+    def popen(cmd, **kw):
+        calls.append(cmd)
+        state["up"] = True
+
+    assert llm.ensure_ollama(client, popen=popen, sleep=lambda s: None) == "started"
+    assert calls == [[str(exe), "serve"]]
+
+
+def test_ensure_ollama_missing(monkeypatch):
+    from jarvis import llm
+    monkeypatch.setattr(llm, "find_ollama", lambda: None)
+    assert llm.ensure_ollama(OllamaClient("http://127.0.0.1:9", "m", timeout=1)) == "missing"
+
+
+def test_find_ollama_windows_default(monkeypatch, tmp_path):
+    from jarvis import llm
+    exe = tmp_path / "Programs" / "Ollama" / "ollama.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    assert llm.find_ollama() == str(exe)

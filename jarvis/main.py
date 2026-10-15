@@ -468,6 +468,14 @@ def main(argv: list[str] | None = None) -> int:
     log.info("Запуск JARVIS: %s, Python %s, режим %s", _platform.platform(),
              sys.version.split()[0], "голос" if voice else "текст")
 
+    if config.get("llm.autostart_ollama", True):
+        from .llm import OllamaClient as _Client, ensure_ollama
+        status = ensure_ollama(_Client(config.get("llm.base_url"), config.get("llm.model")))
+        if status == "started":
+            print("Ollama была не запущена — запустил её.")
+        elif status == "failed":
+            print("Ollama не удалось запустить автоматически.")
+
     if args.check or not args.skip_check:
         ok = checks.report(checks.run_all(config, voice=voice))
         if args.check:
