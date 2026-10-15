@@ -119,7 +119,8 @@ class OllamaClient:
         return want in names
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
-             on_text: Callable[[str], bool] | None = None) -> dict[str, Any]:
+             on_text: Callable[[str], bool] | None = None,
+             options: dict[str, Any] | None = None) -> dict[str, Any]:
         """Запрос к модели. С on_text ответ приходит потоком: функция получает
         каждый кусочек текста и может вернуть False, чтобы прервать генерацию."""
         payload: dict[str, Any] = {
@@ -130,7 +131,7 @@ class OllamaClient:
             "keep_alive": self.keep_alive,
             "options": {"temperature": self.temperature,
                         "num_predict": self.num_predict,
-                        "num_ctx": self.num_ctx},
+                        "num_ctx": self.num_ctx, **(options or {})},
         }
         if tools:
             payload["tools"] = tools

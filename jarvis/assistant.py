@@ -20,7 +20,7 @@ from typing import Any, Callable
 from .config import Config
 from .dictation import Dictation
 from .fuzzy import similarity
-from .intents import IntentMatcher
+from .intents import HOTKEY_PHRASES, Intent, IntentMatcher
 from .llm import (SYSTEM_PROMPT, Conversation, LLMError, OllamaClient, SentenceStream,
                   looks_like_tool_text)
 from .memory import Memory
@@ -62,10 +62,22 @@ ORDINALS = {
     4: ("пятый", "пятая", "пятое", "пятую", "пять", "5"),
 }
 
+# Сочинение текста по просьбе («напиши письмо начальнику, что я заболел»).
+COMPOSE_PROMPT = ("Ты пишешь текст от имени пользователя по его просьбе. Выведи только сам "
+                  "готовый текст: без пояснений, вступлений, заголовков, кавычек, markdown и "
+                  "эмодзи. Пиши по-русски, естественно и вежливо. Если длина не указана — "
+                  "до 80 слов.")
+COMPOSE_MAX_TOKENS = 500
+PREVIEW_WORDS = 15
+# Быстрые команды ввода, которые выполняет сам помощник (не инструменты LLM).
+INPUT_INTENTS = ("press_keys", "send_message", "type_in_window", "compose_text")
+
 HELP_TEXT = ("Я умею: открывать любые установленные программы, сайты, папки и файлы; "
              "искать файлы; ставить таймеры и "
              "напоминания; записывать заметки; считать; управлять громкостью и музыкой; "
-             "сворачивать окна; печатать под диктовку; блокировать и выключать компьютер; "
+             "сворачивать окна; печатать под диктовку и в нужное окно, сочинять письма и "
+             "сообщения, нажимать «сохрани», «копировать», «вставить», «отмени ввод»; "
+             "блокировать и выключать компьютер; "
              "рассказывать о системе и просто отвечать на вопросы. "
              "Скажите «стоп», чтобы перебить меня.")
 
@@ -171,6 +183,8 @@ class Assistant:
 
     def _quick_intent(self, text: str) -> Reply | None:
         intent = self.intents.match(text)
+        if intent is not None and intent.tool in INPUT_INTENTS:
+            return self._input_intent(text, intent)
         if intent is None or intent.tool not in self.registry.names():
             return None
         outcome = self._run_tool(intent.tool, intent.args)
@@ -181,6 +195,57 @@ class Assistant:
         self.conversation.add({"role": "assistant", "content": outcome})
         self.conversation.end_turn()
         return Reply(outcome)
+
+    # --- ввод текста и клавиш (LLM к этому доступа не имеет) ---
+    def _input_intent(self, text: str, intent: Intent) -> Reply:
+        if not self.guard.allow_action():
+            return Reply("Слишком много действий за минуту, действие заблокировано.")
+        args = intent.args
+        if intent.tool == "press_keys":
+            error = self.dictation.press(args["keys"])
+            audit.info("press_keys %s -> %s", args["keys"], error or "ok")
+            return Reply(error or "")  # молча и слушаем дальше: «выдели всё» → «копировать»
+        if intent.tool == "send_message":
+            def send() -> str:
+                error = self.dictation.press("send")
+                audit.info("send_message -> %s", error or "ok")
+                return error or "Отправил."
+            audit.info("send_message -> ожидает подтверждения")
+            return Reply(self.confirmations.request(
+                "нажать Enter, чтобы отправить сообщение", send))
+        if intent.tool == "type_in_window":
+            error = self.dictation.type_into(args["window"], args["text"])
+            audit.info("type_in_window %s -> %s", args["window"], error or "ok")
+            return Reply(error or "", expect_followup=False)
+        return self._compose(args["request"])
+
+    def _compose(self, request: str) -> Reply:
+        """LLM сочиняет текст; печатаем в активное окно только после «подтверждаю»."""
+        messages = [{"role": "system", "content": COMPOSE_PROMPT},
+                    {"role": "user", "content": request}]
+        try:
+            message = self.llm.chat(messages, options={"num_predict": COMPOSE_MAX_TOKENS})
+        except LLMError as e:
+            log.error("LLM: %s", e)
+            return Reply("Языковая модель недоступна. Проверьте, что Ollama запущена.")
+        draft = (message.get("content") or "").strip().strip("«»\"' ")
+        if not draft or looks_like_tool_text(draft):
+            return Reply("Не получилось составить текст. Скажите иначе, пожалуйста.")
+        words = draft.split()
+        preview = " ".join(words[:PREVIEW_WORDS]) + ("…" if len(words) > PREVIEW_WORDS else "")
+
+        def type_draft() -> str:
+            error = self.dictation.type_text(draft, voice_punctuation=False)
+            audit.info("compose_text: напечатано %d символов -> %s", len(draft), error or "ok")
+            return error or "Напечатал."
+
+        audit.info("compose_text -> ожидает подтверждения")
+        self.last_draft = draft
+        self.conversation.begin_turn(request)
+        self.conversation.add({"role": "assistant", "content": f"Составил текст: {draft}"})
+        self.conversation.end_turn()
+        return Reply(f"Вот что получилось: {preview} " + self.confirmations.request(
+            "напечатать этот текст в активное окно", type_draft))
 
     def _resolve_choice(self, text: str) -> Reply | None:
         """Ответ на «Нашёл несколько вариантов…». None — это не выбор, обычная реплика."""
@@ -235,6 +300,12 @@ class Assistant:
         if self._matches(text, "stop_dictation") or self._matches(text, "dismiss"):
             self.dictation.active = False
             return Reply("Диктовка завершена.", expect_followup=False)
+        if normalize(text) in HOTKEY_PHRASES["new_line"]:
+            error = self.dictation.press("new_line")  # «новая строка» — перенос, а не слова
+            if error:
+                self.dictation.active = False
+                return Reply(error + " Диктовка остановлена.", expect_followup=False)
+            return Reply("")
         error = self.dictation.type_text(text)
         if error:
             self.dictation.active = False

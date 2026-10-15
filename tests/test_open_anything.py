@@ -201,7 +201,7 @@ def test_open_intents(phrase, intent):
     assert m.match(phrase) == intent
 
 
-@pytest.mark.parametrize("phrase", ["включи музыку", "открой окно", "открой новую вкладку"])
+@pytest.mark.parametrize("phrase", ["включи музыку", "открой окно"])
 def test_open_intents_not_hijacked(phrase):
     assert IntentMatcher({}, {}).match(phrase) is None
 

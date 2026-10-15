@@ -76,6 +76,30 @@ MEDIA_PATTERNS = [
 ]
 
 
+# Голосовые сочетания клавиш (только целая реплика). «Отмена»/«отмени» — встроенная
+# отмена диалога (assistant.BUILTIN_PHRASES), поэтому Ctrl+Z — «отмени ввод», «верни как было».
+HOTKEY_PHRASES = {
+    "new_line": ("новая строка", "с новой строки", "перенос строки", "новый абзац"),
+    "save": ("сохрани", "сохранить", "сохрани файл", "сохрани документ"),
+    "undo": ("отмени ввод", "отменить ввод", "верни как было", "отмени последнее действие",
+             "отмени изменения"),
+    "select_all": ("выдели все", "выделить все", "выдели весь текст"),
+    "copy": ("копировать", "скопируй", "копируй", "скопировать"),
+    "paste": ("вставить", "вставь", "вставь текст"),
+    "close_tab": ("закрой вкладку", "закрыть вкладку"),
+    "new_tab": ("новая вкладка", "открой новую вкладку", "новую вкладку"),
+}
+# Enter — отдельно: отправка сообщения только после «подтверждаю».
+SEND_PHRASES = ("отправь", "отправить", "отправь сообщение", "отправить сообщение", "отправляй")
+# «Напиши в телеграм привет» — исходный текст, чтобы сохранить регистр и знаки.
+TYPE_INTO_RE = re.compile(r"^\s*напиши\s+в\s+(?:окн[оеа]\s+|программ[уе]\s+|приложени[ие]\s+)?"
+                          r"([^\s,.:!?—]+)[\s,.:!?—-]+(\S.*)$", re.I | re.S)
+COMPOSE_RE = re.compile(
+    r"^(?:напиши|сочини|составь|придумай|подготовь)(?: мне| пожалуйста| за меня)? "
+    r"(?:письмо|сообщение|ответ|текст|поздравление|пост|заявление|отзыв|комментарий|объявление"
+    r"|записку|тост|стих|стихотворение|благодарность|извинение|приглашение|просьбу|жалобу)\b")
+
+
 def _lookup(name: str, table: dict[str, str]) -> str | None:
     q = normalize(name)
     for key in table:
@@ -95,6 +119,16 @@ class IntentMatcher:
         norm = normalize(POLITE_RE.sub(" ", normalize(text)))
         if not norm:
             return None
+        for action, phrases in HOTKEY_PHRASES.items():
+            if norm in phrases:
+                return Intent("press_keys", {"keys": action})
+        if norm in SEND_PHRASES:
+            return Intent("send_message")
+        m = TYPE_INTO_RE.match(text)
+        if m:
+            return Intent("type_in_window", {"window": m.group(1), "text": m.group(2).strip()})
+        if COMPOSE_RE.match(norm):
+            return Intent("compose_text", {"request": text.strip()})
         reminder = self._match_reminder(norm)
         if reminder is not None:
             return reminder

@@ -28,9 +28,9 @@ class FakeLLM:
         self.responses = list(responses)
         self.requests = []
 
-    def chat(self, messages, tools=None, on_text=None):
+    def chat(self, messages, tools=None, on_text=None, options=None):
         self.requests.append({"messages": [dict(m) for m in messages], "tools": tools,
-                              "stream": on_text is not None})
+                              "stream": on_text is not None, "options": options})
         if not self.responses:
             r = {"role": "assistant", "content": "ок"}
         else:
