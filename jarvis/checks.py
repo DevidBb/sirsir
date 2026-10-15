@@ -35,15 +35,27 @@ def check_python() -> CheckResult:
     return CheckResult("Python", ok, sys.version.split()[0] + ("" if ok else " — нужен 3.11+"))
 
 
-def check_packages(voice: bool) -> list[CheckResult]:
+def silero_ready(config: Config) -> bool:
+    return (config.path("tts.silero_model_path").is_file()
+            and importlib.util.find_spec("torch") is not None)
+
+
+def uses_system_voice(config: Config) -> bool:
+    engine = config.get("tts.engine", "auto")
+    return engine == "pyttsx3" or (engine in ("auto", "silero") and not silero_ready(config))
+
+
+def check_packages(voice: bool, config: Config | None = None) -> list[CheckResult]:
     results = [_module("numpy", "обработка звука")]
     if voice:
         results += [
             _module("sounddevice", "микрофон"),
             _module("vosk", "фраза пробуждения"),
             _module("faster_whisper", "распознавание речи"),
-            _module("pyttsx3", "синтез речи"),
         ]
+        # Системный голос нужен, только если не будет Silero.
+        results.append(_module("pyttsx3", "синтез речи",
+                               required=config is None or uses_system_voice(config)))
     results += [
         _module("psutil", "системная информация", required=False),
         _module("send2trash", "удаление в корзину", required=False),
@@ -123,8 +135,7 @@ def check_tts(config: Config) -> CheckResult:
 def check_silero(config: Config) -> list[CheckResult]:
     engine = config.get("tts.engine")
     if engine == "auto":
-        on = config.path("tts.silero_model_path").is_file() and importlib.util.find_spec("torch")
-        return [CheckResult("голос", True, "Silero" if on else
+        return [CheckResult("голос", True, "Silero" if silero_ready(config) else
                             "системный (для Silero: install.bat или README)", required=False)]
     if engine != "silero":
         return []
@@ -140,10 +151,13 @@ def check_silero(config: Config) -> list[CheckResult]:
 
 
 def run_all(config: Config, voice: bool = True) -> list[CheckResult]:
-    results = [check_python(), *check_packages(voice), *check_ollama(config)]
+    results = [check_python(), *check_packages(voice, config), *check_ollama(config)]
     if voice:
         results += [check_vosk_model(config), check_whisper_model(config), check_gpu(),
-                    check_microphone(config), check_tts(config), *check_silero(config)]
+                    check_microphone(config)]
+        if uses_system_voice(config):
+            results.append(check_tts(config))
+        results += check_silero(config)
     return results
 
 

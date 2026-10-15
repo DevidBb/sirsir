@@ -116,3 +116,22 @@ def test_network_guard_blocks_external_allows_localhost():
     assert socket.socket.connect.__name__ == "connect"
     assert guard.is_allowed("::1") and guard.is_allowed("127.0.0.5")
     assert not guard.is_allowed("10.0.0.1")
+
+
+@pytest.mark.parametrize("answer,ok", [
+    ("ПОТВЕРДАЯ", True),            # реальное искажение Whisper
+    ("Подтвержаю.", True),
+    ("да, подтверждаю", True),
+    ("подтягиваю", False),
+    ("подождите", False),
+    ("не подтверждаю", False),
+    ("нет", False),
+    ("я тебе потом подтвержу наверное", False),  # длинная фраза — только точное совпадение
+])
+def test_confirmation_tolerates_asr_errors(answer, ok):
+    cm = make_cm(Clock())
+    calls = []
+    cm.request("x", lambda: calls.append(1))
+    status, _ = cm.resolve(answer)
+    assert (status == cm.CONFIRMED) == ok
+    assert calls == ([1] if ok else [])

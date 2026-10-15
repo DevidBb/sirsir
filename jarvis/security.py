@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import difflib
 import ipaddress
 import re
 import socket
@@ -107,9 +108,27 @@ class ConfirmationManager:
         # Подтверждение — только явная фраза; отрицание побеждает.
         if contains_phrase(text, self.cancel_phrases) and not is_exact_phrase(text, self.confirm_phrases):
             return self.CANCELLED, None
-        if contains_phrase(text, self.confirm_phrases):
+        if self._is_confirmation(text):
             return self.CONFIRMED, action.execute()
         return self.CANCELLED, None
+
+    NEGATIONS = {"не", "нет", "ни", "отмена", "отменить", "отмени"}
+    # Whisper иногда искажает «подтверждаю» («потвердая», «подтвержаю»). Похожее
+    # слово принимается, только если ответ короткий (1–2 слова) и без отрицаний.
+    # Порог проверен: «подтягиваю» (0.67), «подождите» (0.6) не проходят.
+    FUZZY_THRESHOLD = 0.78
+
+    def _is_confirmation(self, text: str) -> bool:
+        words = normalize(text).split()
+        if not words or self.NEGATIONS.intersection(words):
+            return False
+        if contains_phrase(text, self.confirm_phrases):
+            return True
+        if len(words) > 2:
+            return False
+        singles = [normalize(p) for p in self.confirm_phrases if " " not in normalize(p)]
+        return any(difflib.SequenceMatcher(None, words[-1], p).ratio() >= self.FUZZY_THRESHOLD
+                   for p in singles)
 
     def cancel(self) -> bool:
         had = self.pending is not None
