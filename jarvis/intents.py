@@ -22,12 +22,19 @@ class Intent:
     args: dict[str, Any] = field(default_factory=dict)
 
 
-OPEN_RE = re.compile(r"^(?:пожалуйста )?(?:открой|запусти|включи|открыть|запустить)(?: мне)? (.+)$")
+OPEN_RE = re.compile(r"^(?:открой|запусти|включи|открыть|запустить|зайди на|перейди на)(?: мне)? (.+)$")
+# Вежливые слова не меняют смысла команды: «открой, пожалуйста, блокнот».
+POLITE_RE = re.compile(r"\b(?:пожалуйста|плиз)\b")
 TIME_PHRASES = ("который час", "сколько времени", "какое время", "какое сегодня число",
-                "какая сегодня дата", "какое число")
+                "какая сегодня дата", "какое число", "который сейчас час", "сколько сейчас времени",
+                "сколько время", "сколько сейчас время", "скажи время", "подскажи время",
+                "какой сегодня день", "какой сегодня день недели", "какой день недели",
+                "какое сегодня число и день недели")
 SYSINFO_PHRASES = ("состояние системы", "загрузка системы", "системная информация",
                    "как там компьютер", "сколько свободно памяти")
-TIMER_RE = re.compile(r"^(?:поставь |заведи |запусти |включи )?таймер (.+)$")
+TIMER_RE = re.compile(r"^(?:поставь |заведи |запусти |включи )?таймер (.+)$|^засеки(?: таймер)? (.+)$")
+# «Поставь будильник на 7:30» — Whisper пишет «7:30», после нормализации «7 30».
+ALARM_RE = re.compile(r"^(?:поставь |заведи )?будильник (?:на )?(\d{1,2}) (\d{2})$|^разбуди меня в (\d{1,2}) (\d{2})$")
 REMIND_IN_RE = re.compile(r"^напомни(?: мне)? через (.+)$")
 REMIND_AT_RE = re.compile(r"^напомни(?: мне)? в (\d{1,2}) (\d{2}) (?:что |чтобы |о том что )?(.+)$")
 LIST_REMINDERS = ("какие напоминания", "мои напоминания", "какие таймеры", "список напоминаний",
@@ -46,12 +53,17 @@ READ_NOTES = ("прочитай заметки", "какие у меня зам�
               "что в заметках", "прочитай мои заметки")
 CALC_START = re.compile(r"^(?:сколько будет|посчитай|вычисли|корень|квадратный корень)\b")
 MEDIA_PATTERNS = [
-    (re.compile(r"(?:сделай )?(?:погромче|громче|прибавь звук|увеличь громкость)"), "volume_up"),
-    (re.compile(r"(?:сделай )?(?:потише|тише|убавь звук|уменьши громкость)"), "volume_down"),
+    (re.compile(r"(?:сделай )?(?:звук |музыку )?(?:по)?громче(?: звук| музыку)?"
+                r"|(?:прибавь|увеличь|подними) (?:звук|громкость)|громкость (?:выше|больше)"), "volume_up"),
+    (re.compile(r"(?:сделай )?(?:звук |музыку )?(?:по)?тише(?: звук| музыку)?"
+                r"|(?:убавь|уменьши|понизь|снизь) (?:звук|громкость)|громкость (?:ниже|меньше)"), "volume_down"),
     (re.compile(r"(?:выключи|отключи|включи) звук|без звука"), "mute"),
-    (re.compile(r"(?:пауза|поставь на паузу|продолжи воспроизведение|продолжи музыку)"), "play_pause"),
-    (re.compile(r"(?:следующий трек|следующая песня|дальше трек)"), "next"),
-    (re.compile(r"(?:предыдущий трек|предыдущая песня|прошлый трек)"), "previous"),
+    (re.compile(r"пауза|(?:поставь )?(?:музыку |видео )?на паузу|останови музыку"
+                r"|(?:продолжи|возобнови) (?:воспроизведение|музыку)"), "play_pause"),
+    (re.compile(r"(?:включи |поставь )?следующ(?:ий трек|ую песню|ая песня)|дальше трек"
+                r"|(?:переключи|пропусти) (?:трек|песню)"), "next"),
+    (re.compile(r"(?:включи |поставь |верни )?(?:предыдущ(?:ий трек|ую песню|ая песня)"
+                r"|прошлый трек|прошлую песню)"), "previous"),
 ]
 
 
@@ -71,7 +83,7 @@ class IntentMatcher:
         self.folders = folders or {}
 
     def match(self, text: str) -> Intent | None:
-        norm = normalize(text)
+        norm = normalize(POLITE_RE.sub(" ", normalize(text)))
         if not norm:
             return None
         reminder = self._match_reminder(norm)
@@ -124,8 +136,14 @@ class IntentMatcher:
             return Intent("cancel_reminders")
         m = TIMER_RE.match(norm)
         if m:
-            seconds = parse_duration(m.group(1))
+            seconds = parse_duration(m.group(1) or m.group(2))
             return Intent("set_timer", {"seconds": seconds}) if seconds else None
+        m = ALARM_RE.match(norm)
+        if m:
+            hour, minute = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+            if int(hour) <= 23 and int(minute) <= 59:
+                return Intent("set_reminder", {"text": "Будильник", "at_time": f"{int(hour):02d}:{minute}"})
+            return None
         m = REMIND_AT_RE.match(norm)
         if m:
             return Intent("set_reminder", {"text": m.group(3),
@@ -135,11 +153,13 @@ class IntentMatcher:
             # «через двадцать пять минут позвонить маме»: ищем самое длинное
             # начало, которое читается как длительность.
             words = m.group(1).split()
-            for k in range(min(4, len(words) - 1), 0, -1):
+            for k in range(min(6, len(words) - 1), 0, -1):
                 seconds = parse_duration(" ".join(words[:k]))
                 if seconds:
                     rest = re.sub(r"^(?:что |чтобы |о том что |про )", "", " ".join(words[k:]) + " ").strip()
                     if rest and seconds % 60 == 0:
                         return Intent("set_reminder", {"text": rest, "minutes": seconds // 60})
+                    # «через 1 минуту 30 секунд ...» — не отрезаем секунды в текст, пусть решает LLM.
+                    return None
             return None
         return None

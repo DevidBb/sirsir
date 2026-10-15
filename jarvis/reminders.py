@@ -49,6 +49,7 @@ def parse_number(text: str) -> int | None:
 _UNIT = r"(секунд[уы]?|сек|минут[уы]?|мин|час(?:а|ов)?)"
 _NUM = r"(\d+|(?:[а-я]+ )?[а-я]+)"
 DURATION_RE = re.compile(rf"^(?:на |через )?(?:{_NUM} )?{_UNIT}$")
+COMPOUND_RE = re.compile(r"^(.+? (?:час(?:а|ов)?|минут[уы]?|мин)|час|полчаса|полтора часа) (?:и )?(.+)$")
 
 
 def parse_duration(text: str) -> int | None:
@@ -60,10 +61,16 @@ def parse_duration(text: str) -> int | None:
     if t in special:
         return special[t]
     m = DURATION_RE.match(t)
-    if not m:
-        return None
-    count = 1 if m.group(1) is None else parse_number(m.group(1))
+    count = None
+    if m:
+        count = 1 if m.group(1) is None else parse_number(m.group(1))
     if count is None:
+        # Составная длительность: «1 минуту 30 секунд», «час и 15 минут».
+        parts = COMPOUND_RE.match(t)
+        if parts:
+            first, second = parse_duration(parts.group(1)), parse_duration(parts.group(2))
+            if first and second and second < first:
+                return first + second
         return None
     unit = m.group(2)
     mult = 1 if unit.startswith("сек") else 60 if unit.startswith("мин") else 3600
