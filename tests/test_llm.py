@@ -126,3 +126,46 @@ def test_client_streaming(fake_stream_server):
     pieces.clear()
     msg = client.chat([{"role": "user", "content": "hi"}], on_text=lambda p: (pieces.append(p), False)[1])
     assert pieces == ["Раз. "] and msg["content"] == "Раз."
+
+
+def test_clean_markdown_keeps_underscores():
+    from jarvis.llm import clean_markdown
+    assert clean_markdown("**Жирный** файл my_file.txt, `код`, 2*3=6 逃离") == \
+        "Жирный файл my_file.txt, код, 2*3=6"
+
+
+@pytest.mark.parametrize("raw,name", [
+    ('{"name": "set_timer", "arguments": {"seconds": 60}}', "set_timer"),
+    ('<tool_call>\n{"name": "add_note", "arguments": {"text": "x"}}\n</tool_call>', "add_note"),
+    ('```json\n{"name": "add_note", "arguments": "{\\"text\\": \\"y\\"}"}\n```', "add_note"),
+    ("system_info", "system_info"),
+])
+def test_text_tool_call_parsed(raw, name):
+    from jarvis.llm import parse_text_tool_call
+    calls = parse_text_tool_call(raw, {"set_timer", "add_note", "system_info"})
+    assert calls and calls[0]["function"]["name"] == name
+
+
+@pytest.mark.parametrize("raw", ['{"name": "rm_rf", "arguments": {}}', "Привет!", '{"a": 1}', "{сломано"])
+def test_text_tool_call_rejected(raw):
+    from jarvis.llm import parse_text_tool_call
+    assert parse_text_tool_call(raw, {"set_timer"}) is None
+
+
+def test_stream_does_not_speak_json():
+    from jarvis.llm import SentenceStream
+    out = []
+    s = SentenceStream(lambda x: out.append(x))
+    for p in ['{"name": "add_note", ', '"arguments": {"text": "Купить хлеб. Молоко."}}']:
+        s.feed(p)
+    s.flush()
+    assert out == []
+
+
+def test_client_converts_text_tool_call(fake_ollama):
+    url, received = fake_ollama
+    client = OllamaClient(url, "qwen3:8b")
+    # фейковый сервер отвечает текстом «Привет!» — не вызов, остаётся текстом
+    msg = client.chat([{"role": "user", "content": "hi"}],
+                      tools=[{"type": "function", "function": {"name": "add_note"}}])
+    assert "tool_calls" not in msg and msg["content"] == "Привет!"

@@ -11,7 +11,7 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 SYSTEM_PROMPT = """Ты — {name}, локальный голосовой помощник на компьютере пользователя с Windows.
-Отвечай по-русски, коротко и по делу: обычно одно-три предложения, без markdown,
+Отвечай только по-русски (без иероглифов и английских вставок), коротко и по делу: обычно одно-три предложения, без markdown,
 списков и эмодзи — ответ будет произнесён вслух.
 Для действий на компьютере используй только предоставленные инструменты.
 Ты не можешь выполнять код, команды оболочки или PowerShell — не предлагай этого.
@@ -24,12 +24,55 @@ class LLMError(RuntimeError):
     pass
 
 
+CJK = re.compile(r"[\u2e80-\u9fff\uac00-\ud7af\uff00-\uffef]+")
+
+
+def clean_markdown(text: str) -> str:
+    """Убирает разметку, но не одиночные «_» (имена файлов, инструментов)."""
+    text = re.sub(r"\*\*|__|`+|^\s*#+\s*|(?<!\w)\*(?!\s)|(?<!\s)\*(?!\w)", "", text, flags=re.M)
+    text = CJK.sub("", text)  # qwen иногда вставляет иероглифы — TTS их не прочтёт
+    return " ".join(text.split())
+
+
 def strip_thinking(text: str) -> str:
     """Убирает рассуждения qwen3 (<think>…</think>) и форматирование."""
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
     text = re.sub(r"<think>.*", "", text, flags=re.S)  # незакрытый тег
-    text = re.sub(r"[*_#`]+", "", text)
-    return " ".join(text.split())
+    return clean_markdown(text)
+
+
+def parse_text_tool_call(text: str, known: set[str] | None = None) -> list[dict] | None:
+    """Модель иногда пишет вызов инструмента текстом, а не через tool_calls:
+    {"name": "set_timer", "arguments": {...}} или <tool_call>…</tool_call>."""
+    t = text.strip()
+    m = re.search(r"<tool_call>\s*(.*?)\s*(?:</tool_call>|$)", t, flags=re.S)
+    if m:
+        t = m.group(1)
+    t = re.sub(r"^```(?:json)?\s*|\s*```$", "", t)
+    if known and t.strip(".") in known:  # ответ одним именем инструмента: «system_info»
+        return [{"function": {"name": t.strip("."), "arguments": {}}}]
+    if not t.startswith("{"):
+        return None
+    try:
+        obj = json.loads(t)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict) or not isinstance(obj.get("name"), str):
+        return None
+    args = obj.get("arguments", obj.get("parameters", {}))
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(args, dict) or (known is not None and obj["name"] not in known):
+        return None
+    return [{"function": {"name": obj["name"], "arguments": args}}]
+
+
+def looks_like_tool_text(text: str) -> bool:
+    t = text.lstrip()
+    return t.startswith(("{", "<tool_call", "```"))
 
 
 class OllamaClient:
@@ -92,6 +135,12 @@ class OllamaClient:
             message = data.get("message") or {}
         else:
             data, message = self._stream(payload, on_text)
+        if not message.get("tool_calls") and tools:
+            known = {t["function"]["name"] for t in tools if "function" in t}
+            parsed = parse_text_tool_call(message.get("content") or "", known)
+            if parsed:
+                message["tool_calls"] = parsed
+                message["content"] = ""
         # Статистика для диагностики: сколько токенов занял запрос и ответ.
         self.last_stats = {k: data.get(k) for k in
                            ("prompt_eval_count", "eval_count", "total_duration", "load_duration")}
@@ -192,7 +241,7 @@ class SentenceStream:
         self.cancelled = False
 
     def _emit(self, sentence: str) -> bool:
-        sentence = " ".join(re.sub(r"[*_#`]+", "", sentence).split())
+        sentence = clean_markdown(sentence)
         if not sentence:
             return True
         self.spoken.append(sentence)
@@ -209,6 +258,8 @@ class SentenceStream:
         if self.cancelled:
             return False
         self._buf += piece
+        if looks_like_tool_text(self._buf):
+            return True  # похоже на вызов инструмента текстом — не озвучиваем
         while True:
             # Ищем конец предложения после минимальной длины, чтобы не дробить «Т.е.» и «Да.»
             m = next((m for m in self._END.finditer(self._buf)
@@ -221,6 +272,6 @@ class SentenceStream:
                 return False
 
     def flush(self) -> None:
-        if self._buf.strip() and not self.cancelled:
+        if self._buf.strip() and not self.cancelled and not looks_like_tool_text(self._buf):
             self._emit(self._buf)
         self._buf = ""

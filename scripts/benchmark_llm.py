@@ -34,7 +34,7 @@ CASES = [
     ("Запомни, что я люблю зелёный чай", "remember_fact"),
     ("Запиши в заметки идею: сделать бота для дома", "add_note"),
     ("Сделай звук чуть громче", "media_control"),
-    ("Сверни окно браузера", "window_action"),
+    ("Сверни окно браузера", "minimize_window"),
     ("Удали файл C:/Users/me/Documents/old.txt", "delete_file"),
     ("Выключи комп", "shutdown_computer"),
     ("Кто написал «Войну и мир»?", None),

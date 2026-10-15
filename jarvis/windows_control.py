@@ -377,11 +377,16 @@ class WindowsController:
             lambda: self.power_action("cancel")))
         registry.register(Tool(
             "list_windows", "Перечислить открытые окна", lambda: self.list_windows()))
-        registry.register(Tool(
-            "window_action", "Переключиться на окно, свернуть, развернуть или восстановить его",
-            lambda title, action: self.window_action(title, action),
-            {"title": Param("string", "Часть заголовка окна"),
-             "action": Param("string", "Действие", enum=["focus", "minimize", "maximize", "restore"])}))
+        # Отдельные инструменты вместо одного с параметром action: небольшие модели
+        # часто забывают обязательный параметр («сверни окно» без action).
+        for name, action, desc in (
+                ("focus_window", "focus", "Переключиться на окно (сделать активным)"),
+                ("minimize_window", "minimize", "Свернуть окно"),
+                ("maximize_window", "maximize", "Развернуть окно на весь экран"),
+                ("restore_window", "restore", "Восстановить свёрнутое окно")):
+            registry.register(Tool(
+                name, desc, (lambda a: lambda title: self.window_action(title, a))(action),
+                {"title": Param("string", "Часть заголовка окна или название программы")}))
         registry.register(Tool(
             "close_window", "Закрыть окно (несохранённые данные могут потеряться)",
             lambda title: self.window_action(title, "close"),

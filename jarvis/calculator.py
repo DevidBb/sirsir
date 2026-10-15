@@ -135,7 +135,7 @@ def calculate(expression: str) -> str:
 def register_tools(registry: ToolRegistry) -> None:
     registry.register(Tool(
         "calculate",
-        "Точно посчитать арифметическое выражение (числа, + - * / ** %, скобки, sqrt). "
-        "Используй для любых вычислений вместо подсчёта в уме.",
+        "Посчитать арифметическое выражение (числа, + - * / ** %, скобки, sqrt). "
+        "Используй для любых вычислений. Не запускает программу «Калькулятор» — для неё open_app.",
         calculate,
         {"expression": Param("string", "Выражение, например 2400*15/100", max_length=MAX_LEN)}))

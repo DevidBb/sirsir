@@ -92,7 +92,7 @@ def test_dangerous_tools_flagged(ctl):
     assert r.get("delete_file").dangerous
     assert r.get("close_window").dangerous
     assert not r.get("open_app").dangerous
-    # закрытие окна нельзя сделать через window_action в обход подтверждения
+    # закрыть окно можно только через close_window (с подтверждением)
     from jarvis.tool_registry import ToolError
     with pytest.raises(ToolError):
         r.validate("window_action", {"title": "x", "action": "close"})
