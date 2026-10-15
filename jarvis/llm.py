@@ -7,7 +7,7 @@ import re
 import urllib.error
 import urllib.request
 from collections import deque
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 SYSTEM_PROMPT = """Ты — {name}, локальный голосовой помощник на компьютере пользователя с Windows.
@@ -71,11 +71,14 @@ class OllamaClient:
         want = self.model if ":" in self.model else self.model + ":latest"
         return want in names
 
-    def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict[str, Any]:
+    def chat(self, messages: list[dict], tools: list[dict] | None = None,
+             on_text: Callable[[str], bool] | None = None) -> dict[str, Any]:
+        """Запрос к модели. С on_text ответ приходит потоком: функция получает
+        каждый кусочек текста и может вернуть False, чтобы прервать генерацию."""
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "stream": False,
+            "stream": on_text is not None,
             "think": False,
             "keep_alive": self.keep_alive,
             "options": {"temperature": self.temperature,
@@ -84,13 +87,49 @@ class OllamaClient:
         }
         if tools:
             payload["tools"] = tools
-        data = self._request("/api/chat", payload)
+        if on_text is None:
+            data = self._request("/api/chat", payload)
+            message = data.get("message") or {}
+        else:
+            data, message = self._stream(payload, on_text)
         # Статистика для диагностики: сколько токенов занял запрос и ответ.
         self.last_stats = {k: data.get(k) for k in
                            ("prompt_eval_count", "eval_count", "total_duration", "load_duration")}
-        message = data.get("message") or {}
         message["content"] = strip_thinking(message.get("content") or "")
         return message
+
+    def _stream(self, payload: dict, on_text: Callable[[str], bool]) -> tuple[dict, dict]:
+        req = urllib.request.Request(self.base_url + "/api/chat", data=json.dumps(payload).encode(),
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        content: list[str] = []
+        tool_calls: list[dict] = []
+        last: dict = {}
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                for raw in resp:  # одна JSON-строка на кусочек
+                    if not raw.strip():
+                        continue
+                    last = json.loads(raw.decode("utf-8"))
+                    if last.get("error"):
+                        raise LLMError(f"Ollama: {last['error']}")
+                    msg = last.get("message") or {}
+                    tool_calls.extend(msg.get("tool_calls") or [])
+                    piece = msg.get("content") or ""
+                    if piece:
+                        content.append(piece)
+                        if on_text(piece) is False:
+                            break  # пользователь перебил — дальше не генерируем
+                    if last.get("done"):
+                        break
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", "replace")[:300]
+            raise LLMError(f"Ollama вернула ошибку {e.code}: {body}") from e
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            raise LLMError(f"Ollama недоступна по адресу {self.base_url}: {e}") from e
+        message: dict[str, Any] = {"role": "assistant", "content": "".join(content)}
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+        return last, message
 
     def unload(self) -> None:
         """Выгрузить модель из VRAM."""
@@ -138,3 +177,50 @@ class Conversation:
 
     def __len__(self) -> int:
         return len(self._turns)
+
+
+class SentenceStream:
+    """Собирает поток текста в законченные предложения для озвучивания."""
+
+    _END = re.compile(r"[.!?…](?=[\s\"»)]|$)")
+
+    def __init__(self, on_sentence: Callable[[str], bool], min_len: int = 12):
+        self.on_sentence = on_sentence
+        self.min_len = min_len
+        self._buf = ""
+        self.spoken: list[str] = []
+        self.cancelled = False
+
+    def _emit(self, sentence: str) -> bool:
+        sentence = " ".join(re.sub(r"[*_#`]+", "", sentence).split())
+        if not sentence:
+            return True
+        self.spoken.append(sentence)
+        if self.on_sentence(sentence) is False:
+            self.cancelled = True
+        return not self.cancelled
+
+    def _abbreviation(self, dot: int) -> bool:
+        """Точка после однобуквенного слова — «т.е.», «т.к.», инициалы «А.С.»."""
+        word = re.search(r"[\w.]+$", self._buf[:dot])
+        return bool(word) and len(word.group(0).replace(".", "")) <= 2 and self._buf[dot] == "."
+
+    def feed(self, piece: str) -> bool:
+        if self.cancelled:
+            return False
+        self._buf += piece
+        while True:
+            # Ищем конец предложения после минимальной длины, чтобы не дробить «Т.е.» и «Да.»
+            m = next((m for m in self._END.finditer(self._buf)
+                      if m.end() >= self.min_len and m.end() < len(self._buf)
+                      and not self._abbreviation(m.start())), None)
+            if m is None:
+                return True
+            sentence, self._buf = self._buf[:m.end()], self._buf[m.end():]
+            if not self._emit(sentence):
+                return False
+
+    def flush(self) -> None:
+        if self._buf.strip() and not self.cancelled:
+            self._emit(self._buf)
+        self._buf = ""

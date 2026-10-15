@@ -58,6 +58,7 @@ class App:
         self.use_tray = tray
         self.tray = None
         self.mic = None
+        self.barged_in = False
         self.stop_event = threading.Event()
         # Будит голосовой цикл, когда нужно что-то сказать без «Джарвис».
         self.wake_interrupt = threading.Event()
@@ -121,12 +122,13 @@ class App:
 
     # --- общий обработчик ---
     def respond(self, text: str) -> Reply | None:
-        reply = self.assistant.handle(text)
+        reply = self.assistant.handle(text, on_sentence=lambda s: self.speaker.say(s) or True)
         if reply is None:
             return None
         if reply.action == STOP:
             self.speaker.interrupt()
-        self.speaker.say(reply.text)
+        if not reply.spoken:
+            self.speaker.say(reply.text)
         if reply.action == EXIT:
             self.stop_event.set()
         return reply
@@ -290,6 +292,7 @@ class App:
             for block in mic.blocks(done, timeout=0.1):
                 if detector.process(block):
                     print("(перебито)", flush=True)
+                    self.barged_in = True
                     self.speaker.interrupt()
                     return
 
@@ -329,12 +332,22 @@ class App:
             if not text:
                 continue
             print(f"Вы: {text}", flush=True)
-            reply = self.assistant.handle(text)
+            self.barged_in = False
+
+            def speak_sentence(sentence: str) -> bool:
+                # Озвучиваем ответ по предложениям, пока модель дописывает остальное.
+                if self.barged_in:
+                    return False
+                self._speak(mic, sentence)
+                return not self.barged_in
+
+            reply = self.assistant.handle(text, on_sentence=speak_sentence)
             if reply is None:
                 continue
             if reply.action == STOP:
                 self.speaker.interrupt()
-            self._speak(mic, reply.text)
+            if not reply.spoken:
+                self._speak(mic, reply.text)
             if reply.action == MUTE:
                 mic.mute()
                 return

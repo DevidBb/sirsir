@@ -78,3 +78,51 @@ def test_client_unavailable():
     client = OllamaClient("http://127.0.0.1:9", "qwen3:8b", timeout=2)
     with pytest.raises(LLMError):
         client.chat([{"role": "user", "content": "hi"}])
+
+
+def test_sentence_stream_splitting():
+    from jarvis.llm import SentenceStream
+    out = []
+    s = SentenceStream(lambda x: out.append(x))
+    for piece in ["При", "вет! Я **Джар", "вис**. Это, т.е. место, где ", "гравитация сильна. Сейчас 12.",
+                  "30 и всё"]:
+        s.feed(piece)
+    s.flush()
+    assert out == ["Привет! Я Джарвис.", "Это, т.е. место, где гравитация сильна.", "Сейчас 12.30 и всё"]
+
+
+@pytest.fixture
+def fake_stream_server():
+    chunks = [{"message": {"content": "Раз. "}}, {"message": {"content": "Два три четыре пять. "}},
+              {"message": {"content": "Шесть."}}, {"message": {"content": ""}, "done": True,
+                                                   "prompt_eval_count": 42}]
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson")
+            self.end_headers()
+            for c in chunks:
+                self.wfile.write((json.dumps(c) + "\n").encode())
+                self.wfile.flush()
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_port}"
+    server.shutdown()
+
+
+def test_client_streaming(fake_stream_server):
+    client = OllamaClient(fake_stream_server, "qwen3:8b")
+    pieces = []
+    msg = client.chat([{"role": "user", "content": "hi"}], on_text=lambda p: pieces.append(p) or True)
+    assert pieces == ["Раз. ", "Два три четыре пять. ", "Шесть."]
+    assert msg["content"] == "Раз. Два три четыре пять. Шесть."
+    assert client.last_stats["prompt_eval_count"] == 42
+    pieces.clear()
+    msg = client.chat([{"role": "user", "content": "hi"}], on_text=lambda p: (pieces.append(p), False)[1])
+    assert pieces == ["Раз. "] and msg["content"] == "Раз."

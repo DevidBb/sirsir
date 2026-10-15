@@ -168,3 +168,38 @@ def test_help_and_repeat(config):
 def test_repeat_only_as_whole_phrase(config):
     a = build(config, [text("Хорошо.")])
     assert a.handle("поставь таймер еще раз").text != "Я ещё ничего не говорил."
+
+
+def test_streaming_speaks_sentences_as_they_come(config):
+    a = build(config, [text("Чёрная дыра — это область пространства. Из неё не выходит даже свет.")])
+    spoken = []
+    reply = a.handle("что такое чёрная дыра", on_sentence=lambda s: spoken.append(s) or True)
+    assert spoken == ["Чёрная дыра — это область пространства.", "Из неё не выходит даже свет."]
+    assert reply.spoken and reply.text.startswith("Чёрная дыра")
+    assert a.fake.requests[0]["stream"]
+
+
+def test_streaming_interrupted(config):
+    a = build(config, [text("Первое длинное предложение. Второе длинное предложение. Третье.")])
+    spoken = []
+    reply = a.handle("расскажи", on_sentence=lambda s: (spoken.append(s), False)[1])
+    assert spoken == ["Первое длинное предложение."]
+    assert reply.spoken and reply.text == ""
+    assert len(a.conversation) == 0  # прерванный ответ не попадает в историю
+
+
+def test_streaming_with_tool_call(config):
+    a = build(config, [tool_call("open_app", name="блокнот"), text("Блокнот открыт, можно писать.")])
+    spoken = []
+    reply = a.handle("мне нужно что-нибудь записать, запусти редактор блокнот, пожалуйста, побыстрее",
+                     on_sentence=lambda s: spoken.append(s) or True)
+    assert a.launched == ["notepad.exe"]
+    assert spoken == ["Блокнот открыт, можно писать."] and reply.spoken
+
+
+def test_confirmation_reply_is_not_streamed(config):
+    a = build(config, [tool_call("shutdown_computer")])
+    spoken = []
+    reply = a.handle("слушай, мне пора спать, выключи этот компьютер полностью прямо сейчас",
+                     on_sentence=lambda s: spoken.append(s) or True)
+    assert "подтверждение" in reply.text.lower() and not reply.spoken

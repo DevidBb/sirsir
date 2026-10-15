@@ -19,7 +19,7 @@ from typing import Any, Callable
 from .config import Config
 from .dictation import Dictation
 from .intents import IntentMatcher
-from .llm import SYSTEM_PROMPT, Conversation, LLMError, OllamaClient
+from .llm import SYSTEM_PROMPT, Conversation, LLMError, OllamaClient, SentenceStream
 from .memory import Memory
 from .security import (CommandGuard, ConfirmationManager, EmergencyStop,
                        contains_phrase, normalize)
@@ -59,6 +59,8 @@ class Reply:
     action: str = NONE
     # Ждать продолжения без фразы пробуждения (диалог/подтверждение).
     expect_followup: bool = True
+    # Ответ уже озвучен по предложениям во время генерации (потоковый режим).
+    spoken: bool = False
 
 
 class Assistant:
@@ -87,13 +89,14 @@ class Assistant:
                                      config.get("windows.folders", {}))
 
     # ------------------------------------------------------------------
-    def handle(self, text: str) -> Reply | None:
-        reply = self._handle(text)
+    def handle(self, text: str, on_sentence: Callable[[str], bool] | None = None) -> Reply | None:
+        """on_sentence — озвучивать ответ LLM по мере генерации (вернуть False — прервать)."""
+        reply = self._handle(text, on_sentence)
         if reply is not None and reply.text and not self._matches(text or "", "repeat"):
             self.last_reply = reply.text
         return reply
 
-    def _handle(self, text: str) -> Reply | None:
+    def _handle(self, text: str, on_sentence: Callable[[str], bool] | None = None) -> Reply | None:
         text = (text or "").strip()
         if not normalize(text):
             return None
@@ -131,7 +134,7 @@ class Assistant:
         if quick is not None:
             return quick
 
-        return self._ask_llm(text)
+        return self._ask_llm(text, on_sentence)
 
     def _quick_intent(self, text: str) -> Reply | None:
         intent = self.intents.match(text)
@@ -203,23 +206,34 @@ class Assistant:
             block = "Что ты знаешь о пользователе:\n" + "\n".join(f"- {f}" for f in facts)
         return SYSTEM_PROMPT.format(name=self.name, facts=block)
 
-    def _ask_llm(self, text: str) -> Reply:
+    def _ask_llm(self, text: str, on_sentence: Callable[[str], bool] | None = None) -> Reply:
         self.emergency.reset()
         self.conversation.begin_turn(text)
         seen_calls: set[str] = set()
+        spoken = False
         try:
             for _ in range(self.max_tool_calls + 1):
+                stream = SentenceStream(on_sentence) if on_sentence else None
                 message = self.llm.chat(self.conversation.messages(self._system_prompt()),
-                                        tools=self.registry.schemas())
+                                        tools=self.registry.schemas(),
+                                        on_text=stream.feed if stream else None)
+                if stream is not None:
+                    if stream.cancelled:  # перебили во время ответа
+                        self.conversation.abort_turn()
+                        return Reply("", spoken=True)
+                    stream.flush()
+                    spoken = spoken or bool(stream.spoken)
                 if self.emergency.active:
                     self.conversation.abort_turn()
                     return Reply("Остановлено.", STOP, expect_followup=False)
                 calls = message.get("tool_calls") or []
                 if not calls:
-                    answer = message.get("content") or "Не знаю, что ответить."
+                    answer = message.get("content") or ""
                     self.conversation.add({"role": "assistant", "content": answer})
                     self.conversation.end_turn()
-                    return Reply(answer)
+                    if not answer:
+                        return Reply("Не знаю, что ответить.")
+                    return Reply(answer, spoken=spoken and stream is not None and bool(stream.spoken))
 
                 self.conversation.add({"role": "assistant", "content": message.get("content", ""),
                                        "tool_calls": calls})
