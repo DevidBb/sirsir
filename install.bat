@@ -71,7 +71,8 @@ echo.
 python scripts\check_components.py
 echo.
 if "%ERRORS%"=="1" goto done_errors
-echo Готово. Дальше: setup_mic.bat - настройка микрофона, затем run.bat - запуск.
+echo Готово. Дальше: .\setup_mic.bat - настройка микрофона, затем .\run.bat - запуск.
+echo (в PowerShell команды пишутся с .\ в начале; можно и просто двойной щелчок по файлу^)
 if "%AUTO%"=="0" pause
 exit /b 0
 
