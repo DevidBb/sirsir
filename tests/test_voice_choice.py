@@ -124,3 +124,11 @@ def test_voices_demo_saves_choice(config, monkeypatch, tmp_path):
     mem = Memory(config.path("memory.db_path"))
     assert mem.get_setting("tts.silero_speaker") == "baya"
     mem.close()
+
+
+def test_describe_shows_model_and_voice():
+    s = tts.Speaker("silero")
+    s.backend = tts.SileroBackend("models/silero/v5_6_ru.pt", "baya")
+    assert "v5_6_ru" in s.describe() and "Бая" in s.describe()
+    s.backend = tts.Pyttsx3Backend("ru")
+    assert s.describe().startswith("системный")

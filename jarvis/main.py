@@ -207,6 +207,7 @@ class App:
                                int(cfg.get("speech_recognition.beam_size", 1)))
         print(f"Распознавание речи: {asr.load()}")
         self.speaker.load()
+        print(f"Голос: {self.speaker.describe()}")
         mic = Microphone(sr, vad.block_ms, cfg.get("audio.input_device") or None)
         mic.start()
         print(f"Микрофон: {mic.name}")
@@ -271,6 +272,7 @@ class App:
             return True  # разбудило напоминание
         # Короткий сигнал не сбрасывает очередь микрофона: если команда
         # сказана сразу после «Джарвис», она попадёт в запись целиком.
+        print("(слышу «Джарвис» — говорите команду)", flush=True)
         if self.config.get("assistant.wake_feedback", "beep") == "voice":
             self._speak(mic, "Слушаю.")
         else:
@@ -347,6 +349,7 @@ class App:
         mic, vad, asr, phrases = parts.mic, parts.vad, parts.asr, parts.phrases
         first = True
         while not self.stop_event.is_set() and not mic.muted:
+            first_turn = first
             if first:
                 cfg = vad
             else:
@@ -363,9 +366,15 @@ class App:
                 if self.assistant.dictation.active:
                     self.assistant.dictation.active = False
                     self._speak(mic, "Диктовка завершена из-за паузы.")
+                elif first_turn:
+                    print("(команду не услышал — после сигнала скажите её громче или ближе к микрофону)",
+                          flush=True)
                 return
-            text = strip_wake_phrase(asr.transcribe(audio), phrases)
+            heard = asr.transcribe(audio)
+            text = strip_wake_phrase(heard, phrases)
             if not text:
+                if first_turn and not heard:
+                    print("(речь не разобрал)", flush=True)
                 continue
             print(f"Вы: {text}", flush=True)
             self.barged_in = False

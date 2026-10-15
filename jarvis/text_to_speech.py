@@ -116,10 +116,15 @@ class SileroBackend:
         if not self.model_path.is_file():
             raise FileNotFoundError(f"Нет модели Silero: {self.model_path}. "
                                     "Запустите scripts/download_models.py --silero")
+        import warnings
+
         import torch  # type: ignore
         torch.set_num_threads(self.threads)
         importer = torch.package.PackageImporter(str(self.model_path))
-        self._model = importer.load_pickle("tts_models", "model")
+        with warnings.catch_warnings():
+            # Код внутри пакета модели Silero выдаёт безвредный SyntaxWarning про '\^'.
+            warnings.simplefilter("ignore", SyntaxWarning)
+            self._model = importer.load_pickle("tts_models", "model")
         self._model.to(torch.device("cpu"))
         # TorchScript оптимизирует модель после пары прогонов: без прогрева
         # первый ответ синтезируется ~4 с, после — ~0.3 с.
@@ -231,6 +236,16 @@ class Speaker:
     def apply_settings(self) -> None:
         if self.backend is not None:
             self.backend.apply(self.rate, self.volume)
+
+    def describe(self) -> str:
+        """Для вывода при запуске: какой движок, модель и голос реально работают."""
+        if isinstance(self.backend, SileroBackend):
+            title = SILERO_VOICES.get(self.backend.speaker, (self.backend.speaker,))[0]
+            return (f"Silero, модель {self.backend.model_path.stem}, голос {title.capitalize()} "
+                    "(сменить: voices.bat или «Джарвис, смени голос»)")
+        if self.backend is not None:
+            return f"системный Windows ({self.voice_name or 'по умолчанию'})"
+        return "нет (текстовый режим)"
 
     def set_voice(self, speaker: str) -> bool:
         """Сменить голос Silero на лету; False — сейчас системный голос, менять нечего."""
