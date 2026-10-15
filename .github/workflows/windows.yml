@@ -1,0 +1,85 @@
+# Проверка на настоящей Windows: зависимости, тесты, Windows API, установщик.
+name: Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "jarvis/**"
+      - "scripts/**"
+      - "tests/**"
+      - "*.bat"
+      - "requirements*.txt"
+      - "config.toml"
+      - ".github/workflows/windows.yml"
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Зависимости (как у пользователя)
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Тесты
+        run: python -m pytest -q
+      - name: Статический анализ
+        run: python -m pyflakes jarvis scripts tests
+      - name: Windows API вживую
+        run: python scripts/windows_smoke.py
+      - name: Проверка компонентов (Ollama и микрофона на машине нет — ошибки ожидаемы)
+        run: python -m jarvis --check
+        continue-on-error: true
+      - name: Диагностический отчёт
+        if: always()
+        run: python -m jarvis --report
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: report-tests
+          path: data/report.txt
+
+  install-bat:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(join(github.event.commits.*.modified, ' '), 'install.bat') ||
+      contains(join(github.event.commits.*.modified, ' '), 'requirements')
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install.bat (ответы — скачать модели речи; Silero не ставить)
+        shell: cmd
+        run: (echo y& echo n& echo.& echo.) | install.bat
+      - name: Окружение, созданное установщиком, работает
+        shell: cmd
+        run: |
+          .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+          .venv\Scripts\python.exe -m pytest -q
+      - name: Модели найдены
+        shell: cmd
+        run: .venv\Scripts\python.exe -m jarvis --check
+        continue-on-error: true
+      - name: Диагностический отчёт
+        if: always()
+        shell: cmd
+        run: .venv\Scripts\python.exe -m jarvis --report
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: report-install
+          path: data/report.txt
