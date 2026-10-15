@@ -52,7 +52,8 @@ def fake_ollama():
         def do_POST(self):
             data = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             received.append(data)
-            self._send({"message": {"role": "assistant", "content": "<think>x</think>Привет!"}})
+            self._send({"message": {"role": "assistant", "content": "<think>x</think>Привет!"},
+                        "prompt_eval_count": 1234, "eval_count": 7})
 
     server = HTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -70,6 +71,7 @@ def test_client_against_fake_server(fake_ollama):
     assert req["think"] is False and req["stream"] is False
     assert req["options"]["num_predict"] == 50
     assert req["tools"] == [{"type": "function"}]
+    assert client.last_stats["prompt_eval_count"] == 1234 and client.last_stats["eval_count"] == 7
 
 
 def test_client_unavailable():
