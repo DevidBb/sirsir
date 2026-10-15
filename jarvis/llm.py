@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import urllib.error
 import urllib.request
@@ -18,6 +19,9 @@ SYSTEM_PROMPT = """Ты — {name}, локальный голосовой пом
 Если подходящего инструмента нет, честно скажи, что не умеешь.
 Не выдумывай результаты действий: дождись ответа инструмента.
 {facts}"""
+
+
+log = logging.getLogger(__name__)
 
 
 class LLMError(RuntimeError):
@@ -179,6 +183,16 @@ class OllamaClient:
         if tool_calls:
             message["tool_calls"] = tool_calls
         return last, message
+
+    def preload(self) -> bool:
+        """Загрузить модель в память заранее, чтобы первый вопрос не ждал загрузки."""
+        try:
+            self._request("/api/generate", {"model": self.model, "keep_alive": self.keep_alive},
+                          timeout=max(self.timeout, 120))
+            return True
+        except LLMError as e:
+            log.warning("Предзагрузка модели не удалась: %s", e)
+            return False
 
     def unload(self) -> None:
         """Выгрузить модель из VRAM."""

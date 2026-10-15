@@ -72,7 +72,7 @@ class App:
             num_predict=int(config.get("llm.num_predict", 220)),
             num_ctx=int(config.get("llm.num_ctx", 8192)),
             timeout=float(config.get("llm.timeout_seconds", 90)),
-            keep_alive=str(config.get("llm.keep_alive", "5m")))
+            keep_alive=str(config.get("llm.keep_alive", "30m")))
         self.speaker = make_speaker(config, voice)
 
         self.registry = ToolRegistry()
@@ -100,6 +100,10 @@ class App:
         elif key == "llm.num_predict":
             self.llm.num_predict = int(value)
         self.speaker.apply_settings()
+
+    def _preload_llm(self) -> None:
+        if self.config.get("llm.preload", True):
+            threading.Thread(target=self.llm.preload, daemon=True, name="llm-preload").start()
 
     # --- напоминания ---
     def _on_reminder(self, text: str) -> None:
@@ -137,6 +141,7 @@ class App:
     def run_text(self) -> None:
         print("Текстовый режим. Пишите команды; «заверши работу» или Ctrl+C — выход.")
         self.reminders.start(self._on_reminder)
+        self._preload_llm()
         while not self.stop_event.is_set():
             try:
                 line = input("> ")
@@ -191,6 +196,7 @@ class App:
             self.tray = Tray(self.toggle_mic, lambda: mic.muted, self.emergency_stop, self.quit)
             self.tray.start()
         self.reminders.start(self._on_reminder)
+        self._preload_llm()
         self.speaker.say(f"{self.config.get('assistant.name', 'Джарвис')} готов.")
         print("Скажите «Джарвис». Enter — вкл/выкл микрофон, s+Enter — стоп, q+Enter — выход.")
 

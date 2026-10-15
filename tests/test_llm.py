@@ -169,3 +169,11 @@ def test_client_converts_text_tool_call(fake_ollama):
     msg = client.chat([{"role": "user", "content": "hi"}],
                       tools=[{"type": "function", "function": {"name": "add_note"}}])
     assert "tool_calls" not in msg and msg["content"] == "Привет!"
+
+
+def test_preload(fake_ollama):
+    url, received = fake_ollama
+    client = OllamaClient(url, "qwen3:8b", keep_alive="30m")
+    assert client.preload()
+    assert received[-1] == {"model": "qwen3:8b", "keep_alive": "30m"}
+    assert not OllamaClient("http://127.0.0.1:9", "qwen3:8b", timeout=1).preload()
