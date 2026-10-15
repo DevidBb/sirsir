@@ -68,6 +68,21 @@ def _():
     return f"класс={cls!r}, заголовок={title!r}, блокируется={is_blocked_window(cls, title)}"
 
 
+@check("меню «Пуск»: ярлыки и разбор .lnk")
+def _():
+    from jarvis.app_finder import StartMenuIndex, parse_lnk, unsafe_target_reason
+    index = StartMenuIndex()
+    shortcuts = index.shortcuts()
+    assert shortcuts, f"ярлыков нет в {index.dirs}"
+    links = [s for s in shortcuts if s.path.suffix.lower() == ".lnk"]
+    parsed = [(s.name, *parse_lnk(s.path.read_bytes())) for s in links]
+    resolved = [p for p in parsed if p[1]]
+    refused = [p[0] for p in parsed if unsafe_target_reason(p[1], p[2])]
+    sample = "; ".join(f"{n} → {t}" for n, t, _ in resolved[:3])
+    return (f"ярлыков {len(shortcuts)}, цель прочитана у {len(resolved)} из {len(links)}, "
+            f"отклонено {len(refused)}. Примеры: {sample}")
+
+
 @check("голоса SAPI (pyttsx3)")
 def _():
     import pyttsx3
