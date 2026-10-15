@@ -21,6 +21,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from jarvis import console_utf8  # noqa: E402
+
+console_utf8()
+
 from jarvis.config import Config  # noqa: E402
 
 VOSK_URL = "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip"

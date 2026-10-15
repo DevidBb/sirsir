@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from . import calculator, checks
+from . import calculator, checks, console_utf8
 from .assistant import EXIT, MUTE, STOP, Assistant, Reply
 from .config import Config
 from .llm import OllamaClient
@@ -432,8 +432,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
+    console_utf8()
     # Модели только локальные: запрещаем библиотекам ходить в интернет.
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")

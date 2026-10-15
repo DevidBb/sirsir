@@ -17,6 +17,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from jarvis import console_utf8  # noqa: E402
+
+console_utf8()
+
 import numpy as np  # noqa: E402
 
 from jarvis.config import Config  # noqa: E402
