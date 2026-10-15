@@ -10,7 +10,7 @@ import time
 import numpy as np
 import pytest
 
-from conftest import FakeLLM, text, tool_call
+from conftest import FakeLLM, tool_call
 from jarvis import main as main_mod
 from jarvis.audio_input import VadConfig
 from jarvis.main import App, VoiceParts
