@@ -33,12 +33,12 @@ def live_llm(config: Config) -> bool:
 
 
 def live_tts(config: Config) -> bool:
-    from jarvis.text_to_speech import Speaker
+    from jarvis.main import make_speaker
     try:
-        s = Speaker(rate=int(config.get("tts.rate", 185)), voice_hint=config.get("tts.voice_hint", "ru"))
+        s = make_speaker(config)
         s.load()
-        s.say("Проверка синтеза речи.")
-        print(f"[OK  ] TTS, голос: {s.voice_name}")
+        s.say("Проверка синтеза речи. Сейчас 12:30, загрузка 42%.")
+        print(f"[OK  ] TTS ({s.engine_name}), голос: {s.voice_name}")
         return True
     except Exception as e:
         print(f"[FAIL] TTS: {e}")

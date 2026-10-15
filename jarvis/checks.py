@@ -120,11 +120,30 @@ def check_tts(config: Config) -> CheckResult:
         return CheckResult("TTS", False, f"ошибка инициализации: {e}")
 
 
+def check_silero(config: Config) -> list[CheckResult]:
+    engine = config.get("tts.engine")
+    if engine == "auto":
+        on = config.path("tts.silero_model_path").is_file() and importlib.util.find_spec("torch")
+        return [CheckResult("голос", True, "Silero" if on else
+                            "системный (для Silero: install.bat или README)", required=False)]
+    if engine != "silero":
+        return []
+    path = config.path("tts.silero_model_path")
+    torch_ok = importlib.util.find_spec("torch") is not None
+    return [
+        CheckResult("пакет torch", torch_ok, "для голоса Silero" if torch_ok else
+                    "не установлен; pip install -r requirements-silero.txt (иначе — системный голос)",
+                    required=False),
+        CheckResult("модель Silero", path.is_file(), str(path) if path.is_file() else
+                    f"нет в {path}; python scripts/download_models.py --silero", required=False),
+    ]
+
+
 def run_all(config: Config, voice: bool = True) -> list[CheckResult]:
     results = [check_python(), *check_packages(voice), *check_ollama(config)]
     if voice:
         results += [check_vosk_model(config), check_whisper_model(config), check_gpu(),
-                    check_microphone(config), check_tts(config)]
+                    check_microphone(config), check_tts(config), *check_silero(config)]
     return results
 
 

@@ -205,19 +205,22 @@ class WindowsController:
 
     # --- система ---
     def system_info(self) -> str:
+        from .text_normalize import plural
+        gb = ("гигабайт", "гигабайта", "гигабайт")
         parts = [f"Система {platform.system()} {platform.release()}"]
         try:
             import psutil  # type: ignore
-            parts.append(f"процессор загружен на {psutil.cpu_percent(interval=0.3):.0f} процентов")
+            parts.append(f"процессор загружен на {psutil.cpu_percent(interval=0.3):.0f}%")
             vm = psutil.virtual_memory()
-            parts.append(f"память занята на {vm.percent:.0f} процентов из {vm.total / 2**30:.0f} гигабайт")
+            total = round(vm.total / 2**30)
+            parts.append(f"память занята на {vm.percent:.0f}%, всего {total} {plural(total, gb)}")
             battery = psutil.sensors_battery()
             if battery is not None:
-                parts.append(f"заряд батареи {battery.percent:.0f} процентов")
+                parts.append(f"заряд батареи {battery.percent:.0f}%")
         except ImportError:
             pass
-        disk = shutil.disk_usage(Path.home().anchor or "/")
-        parts.append(f"свободно на диске {disk.free / 2**30:.0f} гигабайт")
+        free = int(shutil.disk_usage(Path.home().anchor or "/").free / 2**30)
+        parts.append(f"свободно на диске {free} {plural(free, gb)}")
         return ", ".join(parts) + "."
 
     @staticmethod

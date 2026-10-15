@@ -60,7 +60,14 @@ max_tool_calls_per_turn = 3
 
 [tts]
 # "pyttsx3" — системные голоса Windows (SAPI5), ничего не скачивает.
-engine = "pyttsx3"
+# "silero"  — естественный нейросетевой голос (нужны torch и модель ~40 МБ:
+#             pip install -r requirements-silero.txt; python scripts/download_models.py --silero).
+#             Если Silero недоступен, автоматически используется pyttsx3.
+# "auto"    — Silero, если он установлен, иначе pyttsx3.
+engine = "auto"
+silero_model_path = "models/silero/v4_ru.pt"
+# Голоса Silero: aidar, eugene (мужские), baya, kseniya, xenia (женские).
+silero_speaker = "aidar"
 rate = 185
 volume = 1.0
 # Часть имени голоса; на Windows русский голос обычно "Irina" или "Pavel".

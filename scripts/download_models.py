@@ -3,6 +3,8 @@
 - Vosk small ru 0.22 — ~45 МБ архив (~90 МБ на диске): фраза пробуждения, CPU.
 - faster-whisper small — ~470 МБ: распознавание речи, GPU (≈1 ГБ VRAM) или CPU.
 
+- (по флагу --silero) голос Silero v4 ru — ~40 МБ, нужен torch (requirements-silero.txt).
+
 LLM qwen3:8b ставится отдельно: `ollama pull qwen3:8b` (~5.2 ГБ, ≈6 ГБ VRAM).
 """
 
@@ -22,6 +24,7 @@ sys.path.insert(0, str(ROOT))
 from jarvis.config import Config  # noqa: E402
 
 VOSK_URL = "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip"
+SILERO_URL = "https://models.silero.ai/models/tts/ru/v4_ru.pt"
 
 
 def download_vosk(target: Path) -> None:
@@ -43,6 +46,18 @@ def download_vosk(target: Path) -> None:
     print(f"Vosk готов: {target}")
 
 
+def download_silero(target: Path) -> None:
+    if target.is_file():
+        print(f"Silero уже есть: {target}")
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(".part")
+    print(f"Скачиваю {SILERO_URL} (~40 МБ)…")
+    urllib.request.urlretrieve(SILERO_URL, tmp)
+    tmp.replace(target)
+    print(f"Silero готов: {target}")
+
+
 def download_whisper(name: str, models_dir: Path) -> None:
     from faster_whisper.utils import download_model
     models_dir.mkdir(parents=True, exist_ok=True)
@@ -54,15 +69,20 @@ def download_whisper(name: str, models_dir: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument("-y", "--yes", action="store_true", help="не спрашивать подтверждение")
+    parser.add_argument("--silero", action="store_true", help="также скачать голос Silero")
+    parser.add_argument("--only-silero", action="store_true", help="скачать только голос Silero")
     args = parser.parse_args()
     config = Config.load()
     print(__doc__)
     if not args.yes and input("Скачать модели? [y/N] ").strip().lower() not in ("y", "yes", "д", "да"):
         print("Отменено.")
         return 1
-    download_vosk(config.path("wake_word.vosk_model_path"))
-    download_whisper(config.get("speech_recognition.model", "small"),
-                     config.path("speech_recognition.models_dir"))
+    if not args.only_silero:
+        download_vosk(config.path("wake_word.vosk_model_path"))
+        download_whisper(config.get("speech_recognition.model", "small"),
+                         config.path("speech_recognition.models_dir"))
+    if args.silero or args.only_silero:
+        download_silero(config.path("tts.silero_model_path"))
     return 0
 
 

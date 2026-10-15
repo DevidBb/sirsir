@@ -23,6 +23,14 @@ echo.
 python scripts\download_models.py || echo Модели речи не скачаны.
 
 echo.
+echo Естественный голос Silero: ~250 МБ (torch для CPU + модель 40 МБ).
+set SILERO=n
+set /p SILERO="Установить голос Silero? [y/N] "
+if /i not "%SILERO%"=="y" goto ollama
+pip install -r requirements-silero.txt --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+python scripts\download_models.py --only-silero -y
+:ollama
+echo.
 where ollama >nul 2>nul
 if errorlevel 1 goto no_ollama
 echo Модель qwen3:8b весит ~5.2 ГБ.

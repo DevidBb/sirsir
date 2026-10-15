@@ -24,7 +24,8 @@
 | `jarvis/tool_registry.py` | реестр разрешённых действий и проверка аргументов |
 | `jarvis/windows_control.py` | приложения, сайты, поиск файлов, системная информация, окна |
 | `jarvis/memory.py` | SQLite: факты о пользователе и голосовые настройки |
-| `jarvis/text_to_speech.py` | озвучка, прерываемая между предложениями |
+| `jarvis/text_to_speech.py` | озвучка (Silero или SAPI5), прерываемая между предложениями |
+| `jarvis/text_normalize.py` | числа, время и проценты словами для Silero |
 | `jarvis/security.py` | аварийная остановка, подтверждения, антиповтор, сетевой фильтр |
 | `jarvis/intents.py` | быстрые команды без LLM («открой блокнот», «который час», «погромче») |
 | `jarvis/assistant.py` | логика диалога (без аудио — тестируется отдельно) |
@@ -57,7 +58,17 @@
    ```
    python scripts\download_models.py
    ```
-5. Русский голос: *Параметры → Время и язык → Речь → Добавить голоса → Русский*.
+5. Голос, один из двух вариантов:
+   - **Silero** (естественный нейросетевой голос, ~250 МБ: torch для CPU и модель 40 МБ):
+     ```
+     pip install -r requirements-silero.txt --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+     python scripts\download_models.py --only-silero
+     ```
+     Работает на CPU и не занимает видеопамять. Первый ответ готов примерно через 0,4 с.
+     Голоса: aidar, eugene, baya, kseniya, xenia (`tts.silero_speaker`).
+   - **Системный**: *Параметры → Время и язык → Речь → Добавить голоса → Русский*.
+
+   В режиме `tts.engine = "auto"` (по умолчанию) используется Silero, если он установлен, иначе системный голос.
 
 Память: Whisper small на GPU занимает около 1 ГБ, qwen3:8b около 6 ГБ, то есть 12 ГБ VRAM хватает с запасом.
 Если GPU недоступен, Whisper автоматически работает на CPU (int8).

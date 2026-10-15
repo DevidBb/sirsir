@@ -29,6 +29,15 @@ from .windows_control import WindowsController
 log = logging.getLogger("jarvis")
 
 
+def make_speaker(config: Config, voice: bool = True) -> Speaker:
+    return Speaker(config.get("tts.engine", "auto") if voice else "print",
+                   rate=int(config.get("tts.rate", 185)),
+                   volume=float(config.get("tts.volume", 1.0)),
+                   voice_hint=config.get("tts.voice_hint", "ru"),
+                   silero_model=config.path("tts.silero_model_path"),
+                   silero_speaker=config.get("tts.silero_speaker", "aidar"))
+
+
 class App:
     def __init__(self, config: Config, voice: bool, tray: bool = False):
         self.config = config
@@ -50,10 +59,7 @@ class App:
             num_ctx=int(config.get("llm.num_ctx", 4096)),
             timeout=float(config.get("llm.timeout_seconds", 90)),
             keep_alive=str(config.get("llm.keep_alive", "5m")))
-        self.speaker = Speaker(config.get("tts.engine", "pyttsx3") if voice else "print",
-                               rate=int(config.get("tts.rate", 185)),
-                               volume=float(config.get("tts.volume", 1.0)),
-                               voice_hint=config.get("tts.voice_hint", "ru"))
+        self.speaker = make_speaker(config, voice)
 
         self.registry = ToolRegistry()
         WindowsController(config).register_tools(self.registry)
