@@ -80,3 +80,11 @@ def test_terminal_refused(config):
 def test_not_windows_without_typer(monkeypatch):
     monkeypatch.setattr("sys.platform", "linux")
     assert "только в Windows" in Dictation().type_text("привет")
+
+
+@pytest.mark.parametrize("phrase", ["Стоп.", "хватит", "всё"])
+def test_short_stop_word_ends_dictation(config, phrase):
+    a, typed, _ = make(config)
+    a.handle("начни диктовку")
+    assert a.handle(phrase).text == "Диктовка завершена."
+    assert typed == [] and not a.dictation.active

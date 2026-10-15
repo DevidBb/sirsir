@@ -241,3 +241,27 @@ def test_broken_json_is_not_read_aloud(config):
     a = build(config, [text('{"name": "unknown_tool", "arguments": {}}')])
     reply = a.handle("сделай что-нибудь странное")
     assert "{" not in reply.text and "Скажите иначе" in reply.text
+
+
+@pytest.mark.parametrize("phrase", ["Спасибо!", "спасибо большое", "благодарю"])
+def test_thanks_ends_dialog_without_llm(config, phrase):
+    a = build(config, [])
+    reply = a.handle(phrase)
+    assert reply.text == "Пожалуйста." and not reply.expect_followup
+    assert a.fake.requests == []
+
+
+@pytest.mark.parametrize("phrase", ["Стоп.", "хватит", "всё", "ничего не надо"])
+def test_stop_word_after_answer_ends_dialog_silently(config, phrase):
+    a = build(config, [text("Длинный ответ.")])
+    a.handle("расскажи сказку")
+    reply = a.handle(phrase)
+    assert reply.text == "" and not reply.expect_followup and reply.action not in (STOP, EXIT)
+    assert len(a.fake.requests) == 1  # в LLM не ходили
+    assert a.handle("повтори").text == "Длинный ответ."  # пустой ответ не затирает последний
+
+
+def test_stop_word_inside_request_still_goes_to_llm(config):
+    a = build(config, [text("Хорошо.")])
+    assert a.handle("хватит ли мне денег на отпуск").text == "Хорошо."
+    assert len(a.fake.requests) == 1

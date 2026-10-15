@@ -35,6 +35,11 @@ NONE, MUTE, EXIT, STOP = "none", "mute", "exit", "stop"
 
 BUILTIN_PHRASES = {
     "cancel": ["отмена", "отмени", "отбой", "забудь", "неважно", "ничего"],
+    # Завершение разговора: без похода в LLM и без ожидания продолжения.
+    "thanks": ["спасибо", "спасибо большое", "большое спасибо", "благодарю", "все спасибо",
+               "спасибо все", "спасибо хватит", "отлично спасибо"],
+    "dismiss": ["стоп", "хватит", "замолчи", "помолчи", "все", "достаточно", "свободен",
+                "ничего не надо", "не надо", "все хватит"],
     "mute": ["выключи микрофон", "отключи микрофон", "не слушай"],
     "clear_memory": ["очисти память", "забудь все", "сотри память"],
     "reset_dialog": ["новый диалог", "сбрось диалог", "начнем сначала"],
@@ -163,13 +168,13 @@ class Assistant:
     def _matches(self, text: str, key: str) -> bool:
         norm = normalize(text)
         phrases = BUILTIN_PHRASES[key]
-        if key in ("cancel", "repeat", "help"):
+        if key in ("cancel", "repeat", "help", "thanks", "dismiss"):
             # Только как отдельная короткая реплика, иначе «поставь таймер ещё раз» → повтор.
             return norm in [normalize(p) for p in phrases]
         return contains_phrase(norm, phrases) and len(norm.split()) <= 6
 
     def _dictate(self, text: str) -> Reply:
-        if self._matches(text, "stop_dictation"):
+        if self._matches(text, "stop_dictation") or self._matches(text, "dismiss"):
             self.dictation.active = False
             return Reply("Диктовка завершена.", expect_followup=False)
         error = self.dictation.type_text(text)
@@ -193,6 +198,12 @@ class Assistant:
         if self._matches(text, "cancel"):
             self.conversation.abort_turn()
             return Reply("Хорошо, отменяю.", expect_followup=False)
+        if self._matches(text, "thanks"):
+            return Reply("Пожалуйста.", expect_followup=False)
+        if self._matches(text, "dismiss"):
+            # «Стоп» после ответа: молча заканчиваем разговор и ждём «Джарвис».
+            self.conversation.abort_turn()
+            return Reply("", expect_followup=False)
         if self._matches(text, "mute"):
             return Reply("Выключаю микрофон. Включить снова можно клавишей Enter в окне программы.",
                          MUTE, expect_followup=False)
