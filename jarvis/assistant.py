@@ -75,7 +75,8 @@ class Assistant:
         self.on_setting_changed = on_setting_changed
         self.dictation = dictation or Dictation()
         self.intents = IntentMatcher(config.get("windows.apps", {}),
-                                     config.get("windows.websites", {}))
+                                     config.get("windows.websites", {}),
+                                     config.get("windows.folders", {}))
 
     # ------------------------------------------------------------------
     def handle(self, text: str) -> Reply | None:

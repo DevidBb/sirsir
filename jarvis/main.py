@@ -17,11 +17,12 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from . import checks
+from . import calculator, checks
 from .assistant import EXIT, MUTE, STOP, Assistant, Reply
 from .config import Config
 from .llm import OllamaClient
 from .memory import Memory
+from .notes import Notes
 from .reminders import Reminders
 from .security import NetworkGuard
 from .text_to_speech import Speaker, play_beep
@@ -68,7 +69,7 @@ class App:
             config.get("llm.base_url"), config.get("llm.model"),
             temperature=float(config.get("llm.temperature", 0.4)),
             num_predict=int(config.get("llm.num_predict", 220)),
-            num_ctx=int(config.get("llm.num_ctx", 4096)),
+            num_ctx=int(config.get("llm.num_ctx", 8192)),
             timeout=float(config.get("llm.timeout_seconds", 90)),
             keep_alive=str(config.get("llm.keep_alive", "5m")))
         self.speaker = make_speaker(config, voice)
@@ -78,6 +79,9 @@ class App:
         self.memory.register_tools(self.registry, on_setting_changed=self._on_setting_changed)
         self.reminders = Reminders(self.memory)
         self.reminders.register_tools(self.registry)
+        self.notes = Notes(self.memory)
+        self.notes.register_tools(self.registry)
+        calculator.register_tools(self.registry)
         self.assistant = Assistant(config, self.llm, self.registry, self.memory,
                                    on_setting_changed=self._on_setting_changed)
 

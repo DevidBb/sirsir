@@ -45,6 +45,31 @@ def _default_key_press(vk: int) -> None:
     user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
 
 
+def _default_power(action: str) -> None:
+    """Блокировка, сон, выключение. Только Windows, без прав администратора."""
+    if not IS_WINDOWS:
+        raise OSError("управление питанием доступно только в Windows")
+    import ctypes
+    import threading
+    if action == "lock":
+        ctypes.windll.user32.LockWorkStation()  # type: ignore[attr-defined]
+    elif action == "sleep":
+        # Пауза, чтобы помощник успел договорить ответ.
+        threading.Timer(3, lambda: ctypes.windll.powrprof.SetSuspendState(0, 1, 0)).start()  # type: ignore
+    elif action in ("shutdown", "restart"):
+        flag = "/s" if action == "shutdown" else "/r"
+        subprocess.run(["shutdown", flag, "/t", str(SHUTDOWN_DELAY)], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    elif action == "cancel":
+        subprocess.run(["shutdown", "/a"], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        raise ValueError(action)
+
+
+SHUTDOWN_DELAY = 60
+
+
 def _default_launcher(command: str) -> None:
     if IS_WINDOWS:
         # ShellExecute находит программы через App Paths (msedge.exe и т.п.)
@@ -108,7 +133,8 @@ class WindowsController:
                  url_opener: Callable[[str], Any] | None = None,
                  window_backend: WindowBackend | None = None,
                  trash: Callable[[str], None] | None = None,
-                 key_press: Callable[[int], None] | None = None):
+                 key_press: Callable[[int], None] | None = None,
+                 power: Callable[[str], None] | None = None):
         self.apps: dict[str, str] = config.get("windows.apps", {})
         self.websites: dict[str, str] = config.get("windows.websites", {})
         self.allowed_dirs = [Path(d).expanduser().resolve()
@@ -120,6 +146,8 @@ class WindowsController:
         self.windows = window_backend or WindowBackend()
         self._trash = trash
         self.key_press = key_press or _default_key_press
+        self.power = power or _default_power
+        self.folders: dict[str, str] = config.get("windows.folders", {})
 
     # --- поиск по белым спискам ---
     @staticmethod
@@ -152,6 +180,37 @@ class WindowsController:
             return f"Адрес сайта {key} в настройках некорректен."
         self.open_url(url)
         return f"Открываю {key}."
+
+    # --- папки ---
+    def open_folder(self, name: str) -> str:
+        found = self._lookup(name, self.folders)
+        if not found:
+            return f"Папка «{name}» не в списке. Доступны: {', '.join(self.folders)}."
+        key, raw = found
+        path = Path(raw).expanduser()
+        if not path.is_dir():
+            return f"Папка {key} не найдена на диске."
+        self.launch(str(path))
+        return f"Открываю папку {key}."
+
+    # --- питание ---
+    def power_action(self, action: str) -> str:
+        messages = {
+            "lock": "Блокирую компьютер.",
+            "sleep": "Перевожу компьютер в сон.",
+            "shutdown": f"Компьютер выключится через {SHUTDOWN_DELAY} секунд. "
+                        "Чтобы отменить, скажите «отмени выключение».",
+            "restart": f"Компьютер перезагрузится через {SHUTDOWN_DELAY} секунд. "
+                       "Чтобы отменить, скажите «отмени выключение».",
+            "cancel": "Выключение отменено.",
+        }
+        try:
+            self.power(action)
+        except (OSError, subprocess.CalledProcessError) as e:
+            if action == "cancel":
+                return "Запланированного выключения нет."
+            return f"Не получилось: {e}."
+        return messages[action]
 
     # --- файлы ---
     def _inside_allowed(self, path: Path) -> bool:
@@ -288,6 +347,28 @@ class WindowsController:
             lambda action, steps=1: self.media_control(action, steps),
             {"action": Param("string", "Действие", enum=list(MEDIA_KEYS)),
              "steps": Param("integer", "Сколько шагов громкости (1-10)", required=False)}))
+        registry.register(Tool(
+            "open_folder", "Открыть папку в проводнике: " + ", ".join(self.folders),
+            lambda name: self.open_folder(name),
+            {"name": Param("string", "Название папки")}))
+        registry.register(Tool(
+            "lock_screen", "Заблокировать компьютер (экран блокировки)",
+            lambda: self.power_action("lock")))
+        registry.register(Tool(
+            "sleep_computer", "Перевести компьютер в спящий режим",
+            lambda: self.power_action("sleep"),
+            dangerous=True, confirm_template="перевести компьютер в сон"))
+        registry.register(Tool(
+            "shutdown_computer", "Выключить компьютер (через минуту, можно отменить)",
+            lambda: self.power_action("shutdown"),
+            dangerous=True, confirm_template="выключить компьютер"))
+        registry.register(Tool(
+            "restart_computer", "Перезагрузить компьютер (через минуту, можно отменить)",
+            lambda: self.power_action("restart"),
+            dangerous=True, confirm_template="перезагрузить компьютер"))
+        registry.register(Tool(
+            "cancel_shutdown", "Отменить запланированное выключение или перезагрузку",
+            lambda: self.power_action("cancel")))
         registry.register(Tool(
             "list_windows", "Перечислить открытые окна", lambda: self.list_windows()))
         registry.register(Tool(

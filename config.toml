@@ -54,7 +54,8 @@ model = "qwen3:8b"
 temperature = 0.4
 # Ограничение длины ответа (токены) и контекста.
 num_predict = 220
-num_ctx = 4096
+# Описания ~30 инструментов занимают ~3 тыс. токенов, поэтому 8192 (≈1.2 ГБ VRAM на кэш).
+num_ctx = 8192
 timeout_seconds = 90
 # Выгружать LLM из VRAM через N секунд простоя ("5m", "0" — сразу, "-1" — никогда).
 keep_alive = "5m"
@@ -108,6 +109,15 @@ audit_log = "data/actions.log"
 "гитхаб" = "https://github.com"
 "википедия" = "https://ru.wikipedia.org"
 "почта" = "https://mail.google.com"
+
+[windows.folders]
+# Папки, которые можно открыть голосом («открой загрузки»).
+"загрузки" = "~/Downloads"
+"документы" = "~/Documents"
+"рабочий стол" = "~/Desktop"
+"музыка" = "~/Music"
+"изображения" = "~/Pictures"
+"видео" = "~/Videos"
 
 [windows.search]
 # Каталоги, где разрешён поиск файлов. "~" — домашняя папка пользователя.
