@@ -76,8 +76,10 @@ max_tool_calls_per_turn = 3
 #             Если Silero недоступен, автоматически используется pyttsx3.
 # "auto"    — Silero, если он установлен, иначе pyttsx3.
 engine = "auto"
-silero_model_path = "models/silero/v4_ru.pt"
+# v5 — лучше интонации и ударения. Если скачана только старая v4_ru.pt, используется она.
+silero_model_path = "models/silero/v5_6_ru.pt"
 # Голоса Silero: aidar, eugene (мужские), baya, kseniya, xenia (женские).
+# Послушать все: voices.bat. Сменить голосом: «смени голос», «голос бая», «женский голос».
 silero_speaker = "aidar"
 rate = 185
 volume = 1.0

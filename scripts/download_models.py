@@ -3,7 +3,8 @@
 - Vosk small ru 0.22 — ~45 МБ архив (~90 МБ на диске): фраза пробуждения, CPU.
 - faster-whisper small — ~470 МБ: распознавание речи, GPU (≈1 ГБ VRAM) или CPU.
 
-- (по флагу --silero) голос Silero v4 ru — ~40 МБ, нужен torch (requirements-silero.txt).
+- (по флагу --silero / --only-silero) голос Silero v5 ru (модель из tts.silero_model_path),
+  нужен torch (requirements-silero.txt). Уже скачанная v4 при этом не удаляется.
 
 LLM qwen3:8b ставится отдельно: `ollama pull qwen3:8b` (~5.2 ГБ, ≈6 ГБ VRAM).
 """
@@ -28,7 +29,7 @@ console_utf8()
 from jarvis.config import Config  # noqa: E402
 
 VOSK_URL = "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip"
-SILERO_URL = "https://models.silero.ai/models/tts/ru/v4_ru.pt"
+SILERO_BASE = "https://models.silero.ai/models/tts/ru/"
 
 
 def download_vosk(target: Path) -> None:
@@ -56,8 +57,15 @@ def download_silero(target: Path) -> None:
         return
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(".part")
-    print(f"Скачиваю {SILERO_URL} (~40 МБ)…")
-    urllib.request.urlretrieve(SILERO_URL, tmp)
+    url = SILERO_BASE + target.name  # имя файла = версия модели: v5_6_ru.pt, v4_ru.pt
+
+    def progress(blocks: int, block_size: int, total: int) -> None:
+        if total > 0:
+            print(f"\r  {min(100, blocks * block_size * 100 // total)}% из {total // 2**20} МБ",
+                  end="", flush=True)
+    print(f"Скачиваю голос Silero: {url}")
+    urllib.request.urlretrieve(url, tmp, progress)
+    print()
     tmp.replace(target)
     print(f"Silero готов: {target}")
 

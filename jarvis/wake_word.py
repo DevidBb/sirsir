@@ -120,6 +120,12 @@ class VoskWakeWord:
         return False
 
 
+# Слова, которые могут стоять перед обращением: «Привет, Джарвис, …», «Доброе утро, Джарвис».
+WAKE_LEAD_WORDS = {"эй", "слушай", "ну", "так", "окей", "ок", "о", "привет", "здравствуй",
+                   "здорово", "хай", "хей", "алло", "доброе", "добрый", "утро", "день", "вечер",
+                   "дорогой"}
+
+
 def strip_wake_phrase(text: str, phrases: list[str]) -> str:
     """«Джарвис, открой блокнот» → «открой блокнот».
 
@@ -127,8 +133,8 @@ def strip_wake_phrase(text: str, phrases: list[str]) -> str:
     нечёткое. Учитывается и обращение вида «Эй, Джарвис, …».
     """
     words = text.strip().split()
-    for i in range(min(2, len(words))):
+    for i in range(min(3, len(words))):
         if _similar_to_wake(words[i], phrases):
-            if i == 0 or normalize(words[0]) in ("эй", "слушай", "ну", "так", "окей", "о"):
+            if all(normalize(w) in WAKE_LEAD_WORDS for w in words[:i]):
                 return " ".join(words[i + 1:]).lstrip(",.!: ")
     return text.strip()

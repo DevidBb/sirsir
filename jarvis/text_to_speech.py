@@ -1,7 +1,8 @@
 """Озвучивание ответов локальным TTS с возможностью прервать.
 
 Движки:
-- "silero"  — нейросетевой русский голос Silero v4 (torch, CPU, ~40 МБ модели);
+- "silero"  — нейросетевой русский голос Silero v5 (или v4, если скачан только он;
+              torch, CPU);
 - "pyttsx3" — системные голоса Windows (SAPI5), ничего не скачивает;
 - "print"   — только вывод в консоль (текстовый режим и тесты).
 Если Silero недоступен, используется pyttsx3.
@@ -15,6 +16,15 @@ import threading
 from pathlib import Path
 
 log = logging.getLogger(__name__)
+
+# Голоса Silero (v4 и v5): id → как назвать голосом и как представить.
+SILERO_VOICES = {
+    "aidar": ("айдар", "мужской"),
+    "eugene": ("евгений", "мужской"),
+    "baya": ("бая", "женский"),
+    "kseniya": ("ксения", "женский"),
+    "xenia": ("ксюша", "женский"),
+}
 
 
 def split_sentences(text: str, max_len: int = 250) -> list[str]:
@@ -86,7 +96,7 @@ class Pyttsx3Backend:
 
 
 class SileroBackend:
-    """Silero TTS v4 (ru). Работает на CPU, чтобы не занимать VRAM рядом с LLM."""
+    """Silero TTS v5/v4 (ru). Работает на CPU, чтобы не занимать VRAM рядом с LLM."""
 
     name = "silero"
     SAMPLE_RATE = 48000
@@ -99,6 +109,8 @@ class SileroBackend:
         self.volume = 1.0
         self.speed = 1.0
         self._model = None
+        # v5 различает омографы («з+амок/зам+ок»); v4 таких параметров не знает.
+        self._homographs = True
 
     def load(self) -> None:
         if not self.model_path.is_file():
@@ -125,8 +137,15 @@ class SileroBackend:
         text = normalize_for_tts(sentence)
         if not text:
             return None
-        audio = self._model.apply_tts(text=text, speaker=self.speaker,
-                                      sample_rate=self.SAMPLE_RATE, put_accent=True, put_yo=True)
+        kwargs = dict(text=text, speaker=self.speaker, sample_rate=self.SAMPLE_RATE,
+                      put_accent=True, put_yo=True)
+        if self._homographs:
+            try:
+                audio = self._model.apply_tts(**kwargs, put_stress_homo=True, put_yo_homo=True)
+            except TypeError:  # модель v4
+                self._homographs = False
+        if not self._homographs:
+            audio = self._model.apply_tts(**kwargs)
         audio = audio.numpy().astype(np.float32) * self.volume
         if abs(self.speed - 1.0) > 0.05:
             audio = _change_speed(audio, self.speed)
@@ -152,6 +171,18 @@ def _change_speed(audio, speed: float):
     import numpy as np
     n = int(len(audio) / speed)
     return np.interp(np.linspace(0, len(audio) - 1, n), np.arange(len(audio)), audio).astype(np.float32)
+
+
+def resolve_silero_model(path: str | Path | None) -> Path:
+    """Путь к модели Silero. Если новой (v5) ещё нет, а старая v4 скачана — берём v4."""
+    p = Path(path or "models/silero/v5_6_ru.pt")
+    if not p.is_file():
+        old = p.with_name("v4_ru.pt")
+        if old.is_file():
+            log.info("Модель %s не найдена, использую %s (скачайте новую: download_models.py "
+                     "--only-silero)", p.name, old.name)
+            return old
+    return p
 
 
 class Speaker:
@@ -182,7 +213,7 @@ class Speaker:
             self.engine_name = "silero" if has_silero else "pyttsx3"
         if self.engine_name == "silero":
             try:
-                backend = SileroBackend(self.silero_model or "models/silero/v4_ru.pt",
+                backend = SileroBackend(resolve_silero_model(self.silero_model),
                                         self.silero_speaker)
                 backend.load()
                 self.backend = backend
@@ -200,6 +231,18 @@ class Speaker:
     def apply_settings(self) -> None:
         if self.backend is not None:
             self.backend.apply(self.rate, self.volume)
+
+    def set_voice(self, speaker: str) -> bool:
+        """Сменить голос Silero на лету; False — сейчас системный голос, менять нечего."""
+        if speaker not in SILERO_VOICES:
+            raise ValueError(speaker)
+        self.silero_speaker = speaker
+        if isinstance(self.backend, SileroBackend):
+            with self._lock:  # не посреди фразы
+                self.backend.speaker = speaker
+                self.backend.voice_name = f"Silero {speaker}"
+            return True
+        return False
 
     def interrupt(self) -> None:
         self._interrupt.set()

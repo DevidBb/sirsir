@@ -100,6 +100,14 @@ COMPOSE_RE = re.compile(
     r"|записку|тост|стих|стихотворение|благодарность|извинение|приглашение|просьбу|жалобу)\b")
 
 
+# Смена голоса: «смени голос», «голос бая», «женский голос», «поставь голос евгений».
+VOICE_NAMES = {"айдар": "aidar", "евгений": "eugene", "женя": "eugene", "бая": "baya", "байя": "baya",
+               "ксения": "kseniya", "ксюша": "xenia"}
+NEXT_VOICE = ("смени голос", "другой голос", "следующий голос", "поменяй голос", "измени голос")
+VOICE_RE = re.compile(r"^(?:(?:поставь|включи|сделай|давай|выбери|смени на|поменяй на) )?"
+                      r"(?:(мужской|женский) голос|голос (\w+))$")
+
+
 def _lookup(name: str, table: dict[str, str]) -> str | None:
     q = normalize(name)
     for key in table:
@@ -124,6 +132,14 @@ class IntentMatcher:
                 return Intent("press_keys", {"keys": action})
         if norm in SEND_PHRASES:
             return Intent("send_message")
+        if norm in NEXT_VOICE:
+            return Intent("set_voice", {"voice": "next"})
+        m = VOICE_RE.match(norm)
+        if m:
+            if m.group(1):
+                return Intent("set_voice", {"voice": "male" if m.group(1) == "мужской" else "female"})
+            if m.group(2) in VOICE_NAMES:
+                return Intent("set_voice", {"voice": VOICE_NAMES[m.group(2)]})
         m = TYPE_INTO_RE.match(text)
         if m:
             return Intent("type_in_window", {"window": m.group(1), "text": m.group(2).strip()})

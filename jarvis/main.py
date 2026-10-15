@@ -83,6 +83,7 @@ class App:
         self.notes = Notes(self.memory)
         self.notes.register_tools(self.registry)
         calculator.register_tools(self.registry)
+        self._register_voice_tool()
         self.assistant = Assistant(config, self.llm, self.registry, self.memory,
                                    on_setting_changed=self._on_setting_changed)
 
@@ -100,6 +101,32 @@ class App:
         elif key == "llm.num_predict":
             self.llm.num_predict = int(value)
         self.speaker.apply_settings()
+
+    def _register_voice_tool(self) -> None:
+        from .text_to_speech import SILERO_VOICES
+        from .tool_registry import Param, Tool
+        order = list(SILERO_VOICES)
+
+        def set_voice(voice: str) -> str:
+            current = self.speaker.silero_speaker if self.speaker.silero_speaker in order else order[0]
+            if voice == "next":
+                voice = order[(order.index(current) + 1) % len(order)]
+            elif voice in ("male", "female"):
+                kind = "мужской" if voice == "male" else "женский"
+                same = [v for v in order if SILERO_VOICES[v][1] == kind]
+                # Уже такой — берём следующий того же пола.
+                voice = same[(same.index(current) + 1) % len(same)] if current in same else same[0]
+            if not self.speaker.set_voice(voice):
+                return ("Сейчас работает системный голос Windows. Чтобы выбирать голоса, "
+                        "установите Silero: install.bat.")
+            self.memory.set_setting("tts.silero_speaker", voice)
+            self.config.set("tts.silero_speaker", voice)
+            return f"Теперь я говорю так. Это голос {SILERO_VOICES[voice][0].capitalize()}."
+
+        self.registry.register(Tool(
+            "set_voice", "Сменить голос помощника (Silero): aidar, eugene — мужские; "
+            "baya, kseniya, xenia — женские; next — следующий; male/female — мужской/женский",
+            set_voice, {"voice": Param("string", "Голос", enum=order + ["next", "male", "female"])}))
 
     def _preload_llm(self) -> None:
         if self.config.get("llm.preload", True):
@@ -417,6 +444,31 @@ def setup_audit_log(config: Config) -> None:
     audit.addHandler(handler)
 
 
+def voices_demo(config: Config, choose=input) -> int:
+    """Прослушать голоса Silero и сохранить выбранный (voices.bat)."""
+    from .text_to_speech import SILERO_VOICES, Speaker
+    speaker = Speaker("silero", rate=int(config.get("tts.rate", 185)),
+                      silero_model=config.path("tts.silero_model_path"))
+    speaker.load()
+    if speaker.engine_name != "silero":
+        print("Silero не установлен — работает системный голос. Установите его через install.bat.")
+        return 1
+    names = list(SILERO_VOICES)
+    for n, voice in enumerate(names, 1):
+        title, kind = SILERO_VOICES[voice]
+        print(f"{n}. {title.capitalize()} ({kind})")
+        speaker.set_voice(voice)
+        speaker.say(f"Здравствуйте! Я Джарвис, и это голос {title.capitalize()}. Чем могу помочь?")
+    answer = choose("\nНомер голоса, который оставить (Enter — не менять): ").strip()
+    if answer.isdigit() and 1 <= int(answer) <= len(names):
+        voice = names[int(answer) - 1]
+        memory = Memory(config.path("memory.db_path"))
+        memory.set_setting("tts.silero_speaker", voice)
+        memory.close()
+        print(f"Сохранено: {SILERO_VOICES[voice][0].capitalize()}. Запускайте run.bat.")
+    return 0
+
+
 def apply_saved_settings(config: Config) -> None:
     """Перекрыть config.toml настройками из memory.db (выбранный микрофон и т.п.)."""
     try:
@@ -444,6 +496,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="собрать диагностический отчёт в data/report.txt")
     parser.add_argument("--autostart", choices=["on", "off", "status"],
                         help="автозапуск при входе в Windows")
+    parser.add_argument("--voices", action="store_true",
+                        help="прослушать все голоса Silero и выбрать понравившийся")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -476,6 +530,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.setup_mic:
         from . import mic_setup
         return mic_setup.run(config)
+    if args.voices:
+        return voices_demo(config)
     if args.report:
         from . import report
         path = report.write(config)

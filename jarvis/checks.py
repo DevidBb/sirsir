@@ -36,7 +36,8 @@ def check_python() -> CheckResult:
 
 
 def silero_ready(config: Config) -> bool:
-    return (config.path("tts.silero_model_path").is_file()
+    from .text_to_speech import resolve_silero_model
+    return (resolve_silero_model(config.path("tts.silero_model_path")).is_file()
             and importlib.util.find_spec("torch") is not None)
 
 
@@ -142,14 +143,15 @@ def check_silero(config: Config) -> list[CheckResult]:
                             "системный (для Silero: install.bat или README)", required=False)]
     if engine != "silero":
         return []
-    path = config.path("tts.silero_model_path")
+    from .text_to_speech import resolve_silero_model
+    path = resolve_silero_model(config.path("tts.silero_model_path"))
     torch_ok = importlib.util.find_spec("torch") is not None
     return [
         CheckResult("пакет torch", torch_ok, "для голоса Silero" if torch_ok else
                     "не установлен; pip install -r requirements-silero.txt (иначе — системный голос)",
                     required=False),
         CheckResult("модель Silero", path.is_file(), str(path) if path.is_file() else
-                    f"нет в {path}; python scripts/download_models.py --silero", required=False),
+                    f"нет в {path}; python scripts/download_models.py --only-silero", required=False),
     ]
 
 
