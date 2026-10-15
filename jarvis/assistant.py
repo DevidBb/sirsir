@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -71,10 +72,24 @@ COMPOSE_MAX_TOKENS = 500
 PREVIEW_WORDS = 15
 # Быстрые команды ввода, которые выполняет сам помощник (не инструменты LLM).
 INPUT_INTENTS = ("press_keys", "send_message", "type_in_window", "compose_text")
+# Составные команды: «открой блокнот и напиши привет», «запусти телеграм, потом вставь».
+OPEN_TOOLS = ("open_app", "open_website", "open_folder", "open_file", "open_anything")
+SECOND_VERBS = (r"напиши|напечатай|набери|введи|впиши|найди|поищи|включи|поставь|выдели|вставь|"
+                r"скопируй|копируй|сохрани|отправь|открой|создай|новая|закрой|сверни|разверни")
+COMPOSITE_RE = re.compile(
+    rf"^\s*(?P<a>(?:открой|запусти|зайди на|зайди в)\s+.+?)[\s,]+"
+    rf"(?:и потом|а потом|и там|а там|и|потом|затем)\s+(?P<b>(?:{SECOND_VERBS})\b.*)$",
+    re.I | re.S)
+TYPE_AFTER_RE = re.compile(r"^(?:напиши|напечатай|набери|введи|впиши)\s+(?!в\s)(?P<t>\S.*)$",
+                           re.I | re.S)
+LEAD_WORDS_RE = re.compile(r"^\s*(?:(?:привет|здравствуй|слушай|эй|окей|ок|джарвис)[\s,!.]+)+",
+                           re.I)
 
 HELP_TEXT = ("Я умею: открывать любые установленные программы, сайты, папки и файлы; "
              "искать файлы; ставить таймеры и "
              "напоминания; записывать заметки; считать; управлять громкостью и музыкой; "
+             "искать на ютубе, в гугле, на озоне и в спотифае; выполнять составные команды "
+             "вроде «открой блокнот и напиши привет»; "
              "сворачивать окна; печатать под диктовку и в нужное окно, сочинять письма и "
              "сообщения, нажимать «сохрани», «копировать», «вставить», «отмени ввод»; "
              "блокировать и выключать компьютер; "
@@ -117,7 +132,8 @@ class Assistant:
         self.clock = time.monotonic
         self.intents = IntentMatcher(config.get("windows.apps", {}),
                                      config.get("windows.websites", {}),
-                                     config.get("windows.folders", {}))
+                                     config.get("windows.folders", {}),
+                                     config.get("windows.web_search.music", "youtube"))
 
     # ------------------------------------------------------------------
     def emergency_stop(self) -> None:
@@ -175,6 +191,10 @@ class Assistant:
         if builtin is not None:
             return builtin
 
+        composite = self._composite(text)
+        if composite is not None:
+            return composite
+
         quick = self._quick_intent(text)
         if quick is not None:
             return quick
@@ -195,6 +215,34 @@ class Assistant:
         self.conversation.add({"role": "assistant", "content": outcome})
         self.conversation.end_turn()
         return Reply(outcome)
+
+    def _composite(self, text: str) -> Reply | None:
+        """«Открой X и сделай Y»: открыть, дождаться окна программы, выполнить вторую часть."""
+        whole = self.intents.match(text)
+        if whole is not None and whole.tool != "open_anything":
+            return None  # «открой ютуб и найди котиков» — один поиск, не две команды
+        m = COMPOSITE_RE.match(LEAD_WORDS_RE.sub("", text))
+        if not m:
+            return None
+        first_intent = self.intents.match(m.group("a"))
+        if first_intent is None or first_intent.tool not in OPEN_TOOLS:
+            return None
+        before = self.dictation.foreground_title()
+        first = self._quick_intent(m.group("a"))
+        if first is None or self._pending_choice is not None \
+                or not first.text.startswith(("Запускаю", "Открываю")):
+            return first  # переспросили «какой из вариантов» или не открылось — дальше не идём
+        second = m.group("b").strip()
+        typed = TYPE_AFTER_RE.match(second)
+        if typed:
+            # Печатаем только в новое окно: иначе текст ушёл бы туда, где был фокус раньше.
+            if self.dictation.wait_new_foreground(before) is None:
+                return Reply(first.text + " Не дождался окна программы, печатать не стал.")
+            error = self.dictation.type_text(typed.group("t"))
+            return Reply(first.text + (f" {error}" if error else ""), expect_followup=False)
+        self.dictation.wait_new_foreground(before, timeout=4)
+        rest = self._handle(second)
+        return Reply(" ".join(x for x in (first.text, rest.text if rest else "") if x))
 
     # --- ввод текста и клавиш (LLM к этому доступа не имеет) ---
     def _input_intent(self, text: str, intent: Intent) -> Reply:

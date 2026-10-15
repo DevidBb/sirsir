@@ -218,6 +218,24 @@ class Dictation:
         scored = [x for x in scored if x[0] >= WINDOW_THRESHOLD]
         return max(scored)[1] if scored else None
 
+    def foreground_title(self) -> str:
+        """Заголовок активного окна ('' — неизвестно или не Windows)."""
+        if self._foreground is None and sys.platform != "win32":
+            return ""
+        try:
+            return (self._foreground or _foreground_window)()[1]
+        except Exception:
+            return ""
+
+    def wait_new_foreground(self, before: str, timeout: float = 8.0, step: float = 0.25) -> str | None:
+        """Ждёт, пока активным станет другое окно (только что открытая программа)."""
+        for _ in range(int(timeout / step)):
+            title = self.foreground_title()
+            if title and title != before:
+                return title
+            self._sleep(step)
+        return None
+
     def type_into(self, window: str, text: str) -> str | None:
         """«Напиши в телеграм привет»: переключиться на окно и напечатать.
         Название окна может быть из двух слов («google chrome …») — пробуем оба варианта."""

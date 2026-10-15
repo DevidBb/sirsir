@@ -139,6 +139,12 @@ url_schemes = ["http", "https", "steam", "com.epicgames.launcher", "uplay", "ori
 # Свои каталоги с ярлыками вместо стандартных (обычно не нужно):
 # start_menu_dirs = ["C:/Users/Me/Ярлыки"]
 
+[windows.web_search]
+# «Загугли …», «найди в интернете …»: google, yandex и др. (см. SEARCH_SITES в app_finder.py).
+engine = "google"
+# «Включи песню …», «включи музыку …»: youtube, yandex_music или spotify.
+music = "youtube"
+
 [windows.search]
 # Каталоги, где разрешён поиск файлов. "~" — домашняя папка пользователя.
 allowed_dirs = ["~/Documents", "~/Desktop", "~/Downloads", "~/Music", "~/Pictures"]

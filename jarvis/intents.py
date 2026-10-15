@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from .app_finder import FILE_EXTENSIONS
+from .app_finder import FILE_EXTENSIONS, SEARCH_SITE_RE
 from .calculator import phrase_to_expression
 from .reminders import parse_duration
 from .security import normalize
@@ -34,6 +34,8 @@ DOMAIN_RE = re.compile(r"(?:https?://)?[\w-]+(?:\.[\w-]+)+(?:/[^\s,!?]*)?", re.I
 OPEN_ANY_STOP = {"окно", "вкладку", "новую вкладку", "глаза", "дверь", "секрет"}
 # Вежливые слова не меняют смысла команды: «открой, пожалуйста, блокнот».
 POLITE_RE = re.compile(r"\b(?:пожалуйста|плиз)\b")
+# Приветствие и обращение в начале: «привет, открой ютуб», «слушай, джарвис, который час».
+LEAD_RE = re.compile(r"^(?:(?:привет|здравствуй|здорово|слушай|эй|окей|ок|джарвис) )+(?=\S)")
 TIME_PHRASES = ("который час", "сколько времени", "какое время", "какое сегодня число",
                 "какая сегодня дата", "какое число", "который сейчас час", "сколько сейчас времени",
                 "сколько время", "сколько сейчас время", "скажи время", "подскажи время",
@@ -108,6 +110,18 @@ VOICE_RE = re.compile(r"^(?:(?:поставь|включи|сделай|дава
                       r"(?:(мужской|женский) голос|голос (\w+))$")
 
 
+# Поиск: «найди на ютубе котиков», «открой ютуб и включи lofi», «загугли погоду»,
+# «включи песню Imagine Dragons».
+SEARCH_VERB = r"(?:найди|найти|поищи|ищи|покажи|включи|поставь|открой|запусти|посмотри)"
+SEARCH_ON_RE = re.compile(rf"^{SEARCH_VERB}(?: мне)? (?:на|в|во) (?:{SEARCH_SITE_RE}) (?P<q>.+)$")
+SEARCH_AFTER_OPEN_RE = re.compile(
+    rf"^(?:открой|запусти|зайди на|зайди в|перейди на) (?:{SEARCH_SITE_RE})"
+    rf" (?:и|и там|а там|и потом) {SEARCH_VERB}(?: мне)? (?P<q>.+)$")
+WEB_SEARCH_RE = re.compile(r"^(?:загугли|погугли|гугли)(?: мне)? (?P<g>.+)$"
+                           r"|^(?:найди|поищи|ищи|посмотри) в (?:интернете|инете|сети) (?P<d>.+)$")
+MUSIC_RE = re.compile(r"^(?:включи|поставь|найди)(?: мне)? (?:песню|трек|музыку|клип|видео) (?P<q>.+)$")
+
+
 def _lookup(name: str, table: dict[str, str]) -> str | None:
     q = normalize(name)
     for key in table:
@@ -118,13 +132,14 @@ def _lookup(name: str, table: dict[str, str]) -> str | None:
 
 class IntentMatcher:
     def __init__(self, apps: dict[str, str], websites: dict[str, str],
-                 folders: dict[str, str] | None = None):
+                 folders: dict[str, str] | None = None, music_site: str = "youtube"):
         self.apps = apps
         self.websites = websites
         self.folders = folders or {}
+        self.music_site = music_site
 
     def match(self, text: str) -> Intent | None:
-        norm = normalize(POLITE_RE.sub(" ", normalize(text)))
+        norm = LEAD_RE.sub("", normalize(POLITE_RE.sub(" ", normalize(text))))
         if not norm:
             return None
         for action, phrases in HOTKEY_PHRASES.items():
@@ -145,6 +160,9 @@ class IntentMatcher:
             return Intent("type_in_window", {"window": m.group(1), "text": m.group(2).strip()})
         if COMPOSE_RE.match(norm):
             return Intent("compose_text", {"request": text.strip()})
+        search = self._match_search(norm)
+        if search is not None:
+            return search
         reminder = self._match_reminder(norm)
         if reminder is not None:
             return reminder
@@ -188,6 +206,24 @@ class IntentMatcher:
                 return Intent("open_folder", {"name": folder})
             if m.group(1) in OPEN_ANY_VERBS:
                 return self._open_anything(text, raw_target)
+        return None
+
+    def _match_search(self, norm: str) -> Intent | None:
+        if any(pattern.fullmatch(norm) for pattern, _ in MEDIA_PATTERNS):
+            return None  # «поставь музыку на паузу» — это пауза, а не поиск
+        for regex in (SEARCH_AFTER_OPEN_RE, SEARCH_ON_RE):
+            m = regex.match(norm)
+            if m:
+                site = next(k for k, v in m.groupdict().items() if v and k != "q")
+                return Intent("web_search", {"query": m.group("q"), "site": site})
+        m = WEB_SEARCH_RE.match(norm)
+        if m:
+            if m.group("g"):
+                return Intent("web_search", {"query": m.group("g"), "site": "google"})
+            return Intent("web_search", {"query": m.group("d")})
+        m = MUSIC_RE.match(norm)
+        if m:
+            return Intent("web_search", {"query": m.group("q"), "site": self.music_site})
         return None
 
     @staticmethod

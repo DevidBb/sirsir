@@ -216,6 +216,43 @@ FILE_EXTENSIONS = {"doc", "docx", "xls", "xlsx", "ppt", "pptx", "pdf", "txt", "r
                    "jpg", "jpeg", "png", "gif", "bmp", "webp", "mp3", "mp4", "avi", "mkv", "wav",
                    "flac", "mov", "zip", "rar", "7z", "exe", "msi", "bat", "cmd", "ps1", "lnk",
                    "url", "json", "xml", "html", "htm", "py", "log", "ini", "md", "torrent", "iso"}
+# Поиск внутри сайтов и приложений: «найди на ютубе котиков», «включи в спотифае lofi».
+# id → (как назвать в ответе, шаблон адреса, как говорят — регулярное выражение по словам).
+SEARCH_SITES: dict[str, tuple[str, str, str]] = {
+    "youtube": ("YouTube", "https://www.youtube.com/results?search_query={q}", r"ютуб\w*|youtube"),
+    "google": ("Google", "https://www.google.com/search?q={q}", r"гугл\w*|google"),
+    "yandex": ("Яндекс", "https://ya.ru/search/?text={q}", r"яндекс[еау]?"),
+    "yandex_music": ("Яндекс Музыка", "https://music.yandex.ru/search?text={q}",
+                     r"яндекс музык\w*"),
+    "maps": ("Яндекс Карты", "https://yandex.ru/maps/?text={q}", r"(?:яндекс )?карт\w*"),
+    "wikipedia": ("Википедия", "https://ru.wikipedia.org/w/index.php?search={q}",
+                  r"википеди\w*|вики"),
+    "vk": ("ВКонтакте", "https://vk.com/search?c%5Bq%5D={q}", r"вк|вконтакте|в контакте"),
+    "rutube": ("Rutube", "https://rutube.ru/search/?query={q}", r"рутуб\w*"),
+    "kinopoisk": ("Кинопоиск", "https://www.kinopoisk.ru/index.php?kp_query={q}", r"кинопоиск\w*"),
+    "avito": ("Авито", "https://www.avito.ru/rossiya?q={q}", r"авито"),
+    "ozon": ("Озон", "https://www.ozon.ru/search/?text={q}", r"озон\w*"),
+    "wildberries": ("Wildberries", "https://www.wildberries.ru/catalog/0/search.aspx?search={q}",
+                    r"вайлдберриз\w*|валберис\w*|вб"),
+    "github": ("GitHub", "https://github.com/search?q={q}", r"гитхаб\w*|github"),
+    "twitch": ("Twitch", "https://www.twitch.tv/search?term={q}", r"твич\w*|twitch"),
+    "steam": ("магазин Steam", "https://store.steampowered.com/search/?term={q}", r"стим\w*|steam"),
+    # Приложение: адрес spotify: открывает поиск прямо в установленном Spotify.
+    "spotify": ("Spotify", "spotify:search:{q}", r"спотифа\w*|spotify"),
+}
+# Сначала названия из нескольких слов: иначе «яндекс музыке кино» прочиталось бы как «яндекс».
+SEARCH_SITE_RE = "|".join(f"(?P<{key}>{spoken})" for key, (_t, _u, spoken) in
+                          sorted(SEARCH_SITES.items(), key=lambda kv: " " not in kv[1][2]))
+
+
+def search_url(site: str, query: str) -> str:
+    """Адрес поиска: запрос кодируется целиком, подставить в адрес что-то своё нельзя."""
+    from urllib.parse import quote, quote_plus
+    _title, template, _spoken = SEARCH_SITES[site]
+    q = quote(query, safe="") if template.startswith("spotify:") else quote_plus(query)
+    return template.format(q=q)
+
+
 _SPOKEN_TLDS = {"ком": "com", "ру": "ru", "рф": "рф", "нет": "net", "орг": "org", "ио": "io",
                 "тв": "tv", "дев": "dev", "су": "su", "бай": "by", "кз": "kz", "юа": "ua"}
 _HOST_RE = re.compile(r"^(?=.{4,253}$)(?:[a-z0-9а-я](?:[a-z0-9а-я-]{0,61}[a-z0-9а-я])?\.)+"

@@ -20,8 +20,8 @@ import webbrowser
 from pathlib import Path
 from typing import Any, Callable
 
-from .app_finder import (DEFAULT_URL_SCHEMES, KNOWN_SITES, Shortcut, StartMenuIndex,
-                         is_risky_file, parse_lnk, parse_url_file, site_url,
+from .app_finder import (DEFAULT_URL_SCHEMES, KNOWN_SITES, SEARCH_SITES, Shortcut, StartMenuIndex,
+                         is_risky_file, parse_lnk, parse_url_file, search_url, site_url,
                          unsafe_target_reason, url_scheme_allowed)
 from .config import Config
 from .fuzzy import similarity
@@ -173,6 +173,7 @@ class WindowsController:
             [Path(d).expanduser() for d in dirs] if dirs is not None else None,
             float(config.get("windows.launcher.cache_seconds", 600)))
         self.url_schemes = config.get("windows.launcher.url_schemes", DEFAULT_URL_SCHEMES)
+        self.default_search = config.get("windows.web_search.engine", "google")
 
     # --- поиск по белым спискам ---
     # Частичное совпадение — только для осмысленных запросов: иначе «а» или пробел
@@ -380,6 +381,21 @@ class WindowsController:
             return f"Не нашёл {what} «{name}»."
         return f"Не нашёл «{name}» ни среди программ, ни среди сайтов, папок и файлов."
 
+    # --- поиск на сайтах и в приложениях ---
+    def web_search(self, query: str, site: str = "default") -> str:
+        if site == "default" or site not in SEARCH_SITES:
+            site = self.default_search if self.default_search in SEARCH_SITES else "google"
+        title = SEARCH_SITES[site][0]
+        url = search_url(site, query)
+        if url.startswith("spotify:"):
+            try:
+                self.launch(url)  # ShellExecute откроет поиск в установленном Spotify
+            except OSError:
+                return "Spotify не установлен или не открылся."
+            return f"Ищу «{query}» в Spotify."
+        result = self._open_url(title, url)
+        return f"Ищу «{query}»: {title}." if result.startswith("Открываю") else result
+
     # --- папки и файлы ---
     def open_folder(self, name: str) -> str:
         found = self._lookup(name, self.folders)
@@ -537,6 +553,13 @@ class WindowsController:
             "open_website", "Открыть сайт в браузере по названию или адресу (только http/https)",
             lambda name: self.open_website(name),
             {"name": Param("string", "Название сайта или адрес, например habr.com")}))
+        registry.register(Tool(
+            "web_search", "Найти что-то на сайте или в приложении (YouTube, Google, Яндекс, "
+            "Википедия, ВК, Озон, Spotify и др.) — открывает страницу результатов поиска",
+            lambda query, site="default": self.web_search(query, site),
+            {"query": Param("string", "Что искать", max_length=200),
+             "site": Param("string", "Где искать", required=False,
+                           enum=["default", *SEARCH_SITES])}))
         registry.register(Tool(
             "open_file", "Открыть файл пользователя по имени (поиск в папках пользователя)",
             lambda name: self.open_file(name),
