@@ -58,3 +58,11 @@ def test_strip_wake_phrase():
     assert strip_wake_phrase("Джарвис, открой блокнот", phrases) == "открой блокнот"
     assert strip_wake_phrase("открой блокнот", phrases) == "открой блокнот"
     assert strip_wake_phrase("Джарвис", phrases) == ""
+
+
+def test_beep_tone_is_short_and_quiet():
+    from jarvis.text_to_speech import beep_tone, split_sentences
+    tone = beep_tone(ms=100)
+    assert tone.dtype == np.float32 and len(tone) == 2205
+    assert np.abs(tone).max() <= 0.25 and abs(tone[0]) < 0.01
+    assert split_sentences("Раз. Два! Три?") == ["Раз.", "Два!", "Три?"]

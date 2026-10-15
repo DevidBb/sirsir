@@ -24,6 +24,27 @@ from .tool_registry import Param, Tool, ToolRegistry
 IS_WINDOWS = sys.platform == "win32"
 
 
+# Виртуальные мультимедиа-клавиши Windows.
+MEDIA_KEYS = {
+    "volume_up": 0xAF, "volume_down": 0xAE, "mute": 0xAD,
+    "play_pause": 0xB3, "next": 0xB0, "previous": 0xB1,
+}
+MEDIA_NAMES = {
+    "volume_up": "Громче", "volume_down": "Тише", "mute": "Переключаю звук",
+    "play_pause": "Пауза или воспроизведение", "next": "Следующий трек", "previous": "Предыдущий трек",
+}
+
+
+def _default_key_press(vk: int) -> None:
+    if not IS_WINDOWS:
+        raise OSError("мультимедиа-клавиши доступны только в Windows")
+    import ctypes
+    user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+    KEYEVENTF_KEYUP = 0x0002
+    user32.keybd_event(vk, 0, 0, 0)
+    user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
+
+
 def _default_launcher(command: str) -> None:
     if IS_WINDOWS:
         # ShellExecute находит программы через App Paths (msedge.exe и т.п.)
@@ -86,7 +107,8 @@ class WindowsController:
                  launcher: Callable[[str], None] | None = None,
                  url_opener: Callable[[str], Any] | None = None,
                  window_backend: WindowBackend | None = None,
-                 trash: Callable[[str], None] | None = None):
+                 trash: Callable[[str], None] | None = None,
+                 key_press: Callable[[int], None] | None = None):
         self.apps: dict[str, str] = config.get("windows.apps", {})
         self.websites: dict[str, str] = config.get("windows.websites", {})
         self.allowed_dirs = [Path(d).expanduser().resolve()
@@ -97,6 +119,7 @@ class WindowsController:
         self.open_url = url_opener or webbrowser.open
         self.windows = window_backend or WindowBackend()
         self._trash = trash
+        self.key_press = key_press or _default_key_press
 
     # --- поиск по белым спискам ---
     @staticmethod
@@ -198,9 +221,23 @@ class WindowsController:
         return ", ".join(parts) + "."
 
     @staticmethod
-    def current_time() -> str:
-        now = _dt.datetime.now()
-        return f"Сейчас {now:%H:%M}, {now:%d.%m.%Y}."
+    def current_time(now: _dt.datetime | None = None) -> str:
+        now = now or _dt.datetime.now()
+        months = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля",
+                  "августа", "сентября", "октября", "ноября", "декабря"]
+        days = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
+        return f"Сейчас {now:%H:%M}, {now.day} {months[now.month - 1]}, {days[now.weekday()]}."
+
+    # --- звук и музыка ---
+    def media_control(self, action: str, steps: int = 1) -> str:
+        vk = MEDIA_KEYS[action]
+        repeat = max(1, min(int(steps), 10)) if action in ("volume_up", "volume_down") else 1
+        try:
+            for _ in range(repeat * (2 if action in ("volume_up", "volume_down") else 1)):
+                self.key_press(vk)  # одно нажатие громкости = 2%, шаг = 4%
+        except OSError as e:
+            return f"Не получилось: {e}."
+        return MEDIA_NAMES[action] + "."
 
     # --- окна ---
     def list_windows(self) -> str:
@@ -243,6 +280,11 @@ class WindowsController:
             lambda: self.system_info()))
         registry.register(Tool(
             "current_time", "Сообщить текущее время и дату", lambda: self.current_time()))
+        registry.register(Tool(
+            "media_control", "Громкость и управление музыкой/видео",
+            lambda action, steps=1: self.media_control(action, steps),
+            {"action": Param("string", "Действие", enum=list(MEDIA_KEYS)),
+             "steps": Param("integer", "Сколько шагов громкости (1-10)", required=False)}))
         registry.register(Tool(
             "list_windows", "Перечислить открытые окна", lambda: self.list_windows()))
         registry.register(Tool(

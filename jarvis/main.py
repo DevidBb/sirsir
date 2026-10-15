@@ -20,7 +20,7 @@ from .config import Config
 from .llm import OllamaClient
 from .memory import Memory
 from .security import NetworkGuard
-from .text_to_speech import Speaker
+from .text_to_speech import Speaker, play_beep
 from .tool_registry import ToolRegistry
 from .windows_control import WindowsController
 
@@ -108,6 +108,9 @@ class App:
 
         wake = VoskWakeWord(cfg.path("wake_word.vosk_model_path"), phrases, sr)
         wake.load()
+        # Детектор «стоп» на той же модели — слушает, пока помощник говорит.
+        self.stop_detector = (wake.with_phrases(cfg.get("assistant.interrupt_phrases", ["стоп"]))
+                              if cfg.get("assistant.barge_in", True) else None)
         asr = SpeechRecognizer(cfg.get("speech_recognition.model", "small"),
                                cfg.get("speech_recognition.device", "cuda"),
                                cfg.get("speech_recognition.compute_type_gpu", "float16"),
@@ -133,19 +136,47 @@ class App:
                     if mic.error:
                         print(f"{mic.error}. Помощник остановлен.")
                     break
-                self._speak(mic, "Слушаю.")
+                # Короткий сигнал не сбрасывает очередь микрофона: если команда
+                # сказана сразу после «Джарвис», она попадёт в запись целиком.
+                if cfg.get("assistant.wake_feedback", "beep") == "voice":
+                    self._speak(mic, "Слушаю.")
+                else:
+                    play_beep()
                 self._dialog(mic, vad, asr, phrases, record_command, strip_wake_phrase)
                 wake.reset()
         finally:
             mic.stop()
 
     def _speak(self, mic, text: str) -> None:
-        # Микрофон выключен на время речи, чтобы помощник не слышал сам себя.
-        was_muted = mic.muted
-        mic.mute()
-        self.speaker.say(text)
-        if not was_muted:
-            mic.unmute()
+        detector = getattr(self, "stop_detector", None)
+        if detector is None or mic.muted:
+            # Микрофон выключен на время речи, чтобы помощник не слышал сам себя.
+            was_muted = mic.muted
+            mic.mute()
+            self.speaker.say(text)
+            if not was_muted:
+                mic.unmute()
+            return
+
+        # Перебивание: пока идёт речь, слушаем только фразы «стоп/хватит».
+        done = threading.Event()
+
+        def monitor() -> None:
+            detector.reset()
+            for block in mic.blocks(done, timeout=0.1):
+                if detector.process(block):
+                    print("(перебито)", flush=True)
+                    self.speaker.interrupt()
+                    return
+
+        watcher = threading.Thread(target=monitor, daemon=True, name="barge-in")
+        watcher.start()
+        try:
+            self.speaker.say(text)
+        finally:
+            done.set()
+            watcher.join(timeout=1)
+            mic.flush()  # отбрасываем эхо собственной речи
 
     def _dialog(self, mic, vad, asr, phrases, record_command, strip_wake_phrase) -> None:
         first = True
@@ -207,6 +238,19 @@ class App:
         self.memory.close()
 
 
+def setup_audit_log(config: Config) -> None:
+    """Журнал действий: что и с какими аргументами выполнялось (без записи звука)."""
+    from logging.handlers import RotatingFileHandler
+    path = config.path("security.audit_log")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handler = RotatingFileHandler(path, maxBytes=1_000_000, backupCount=3, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+    audit = logging.getLogger("jarvis.audit")
+    audit.setLevel(logging.INFO)
+    audit.propagate = False
+    audit.addHandler(handler)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jarvis", description="Локальный голосовой помощник")
     parser.add_argument("--config", help="путь к config.toml")
@@ -226,6 +270,7 @@ def main(argv: list[str] | None = None) -> int:
 
     config = Config.load(args.config)
     voice = not args.text
+    setup_audit_log(config)
 
     if args.check or not args.skip_check:
         ok = checks.report(checks.run_all(config, voice=voice))

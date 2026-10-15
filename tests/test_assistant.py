@@ -33,7 +33,7 @@ def test_plain_answer_and_history(config):
 
 def test_safe_tool_runs_and_result_goes_back(config):
     a = build(config, [tool_call("open_app", name="блокнот"), text("Открыл блокнот.")])
-    reply = a.handle("открой блокнот")
+    reply = a.handle("слушай, будь добр, запусти мне, пожалуйста, текстовый редактор блокнот")
     assert reply.text == "Открыл блокнот."
     assert a.launched == ["notepad.exe"]
     tool_msg = a.fake.requests[1]["messages"][-1]
@@ -129,3 +129,27 @@ def test_cancel_phrase(config):
     a = build(config, [])
     assert "отменяю" in a.handle("отмена").text
     assert a.fake.requests == []
+
+
+def test_quick_intent_skips_llm(config):
+    a = build(config, [])
+    reply = a.handle("Открой блокнот")
+    assert reply.text == "Запускаю блокнот."
+    assert a.launched == ["notepad.exe"]
+    assert a.fake.requests == []
+    # результат попадает в историю для следующих реплик
+    assert len(a.conversation) == 1
+
+
+def test_unknown_app_goes_to_llm(config):
+    a = build(config, [text("Такого приложения нет в списке.")])
+    assert a.handle("открой фотошоп").text == "Такого приложения нет в списке."
+    assert a.launched == []
+
+
+def test_actions_are_audited(config, caplog):
+    a = build(config, [])
+    with caplog.at_level("INFO", logger="jarvis.audit"):
+        a.handle("открой калькулятор")
+    assert any("open_app" in r.getMessage() and "калькулятор" in r.getMessage()
+               for r in caplog.records)

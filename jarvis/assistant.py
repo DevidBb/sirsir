@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .config import Config
+from .intents import IntentMatcher
 from .llm import SYSTEM_PROMPT, Conversation, LLMError, OllamaClient
 from .memory import Memory
 from .security import (CommandGuard, ConfirmationManager, EmergencyStop,
@@ -24,6 +25,8 @@ from .security import (CommandGuard, ConfirmationManager, EmergencyStop,
 from .tool_registry import ToolError, ToolRegistry
 
 log = logging.getLogger(__name__)
+# Журнал выполненных действий (пишется в data/actions.log, см. main.py).
+audit = logging.getLogger("jarvis.audit")
 
 # Действия для главного цикла.
 NONE, MUTE, EXIT, STOP = "none", "mute", "exit", "stop"
@@ -64,6 +67,8 @@ class Assistant:
             float(config.get("security.duplicate_command_window_seconds", 4)),
             int(config.get("security.max_actions_per_minute", 12)))
         self.on_setting_changed = on_setting_changed
+        self.intents = IntentMatcher(config.get("windows.apps", {}),
+                                     config.get("windows.websites", {}))
 
     # ------------------------------------------------------------------
     def handle(self, text: str) -> Reply | None:
@@ -93,7 +98,24 @@ class Assistant:
         if builtin is not None:
             return builtin
 
+        quick = self._quick_intent(text)
+        if quick is not None:
+            return quick
+
         return self._ask_llm(text)
+
+    def _quick_intent(self, text: str) -> Reply | None:
+        intent = self.intents.match(text)
+        if intent is None or intent.tool not in self.registry.names():
+            return None
+        outcome = self._run_tool(intent.tool, intent.args)
+        if isinstance(outcome, Reply):
+            return outcome
+        # Сохраняем в истории, чтобы LLM знала контекст следующих реплик.
+        self.conversation.begin_turn(text)
+        self.conversation.add({"role": "assistant", "content": outcome})
+        self.conversation.end_turn()
+        return Reply(outcome)
 
     # ------------------------------------------------------------------
     def _matches(self, text: str, key: str) -> bool:
@@ -191,12 +213,14 @@ class Assistant:
 
         def execute() -> str:
             try:
-                return tool.handler(**clean)
+                result = tool.handler(**clean)
             except Exception as e:  # действие не должно ронять помощника
                 log.exception("Ошибка инструмента %s", name)
-                return f"Не удалось выполнить действие: {e}"
+                result = f"Не удалось выполнить действие: {e}"
+            audit.info("%s %s -> %s", name, json.dumps(clean, ensure_ascii=False), result[:200])
+            return result
 
         if tool.dangerous:
+            audit.info("%s %s -> ожидает подтверждения", name, json.dumps(clean, ensure_ascii=False))
             return Reply(self.confirmations.request(self.registry.confirm_text(tool, clean), execute))
-        log.info("Действие %s(%s)", name, clean)
         return execute()

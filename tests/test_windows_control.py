@@ -96,3 +96,26 @@ def test_dangerous_tools_flagged(ctl):
     from jarvis.tool_registry import ToolError
     with pytest.raises(ToolError):
         r.validate("window_action", {"title": "x", "action": "close"})
+
+
+def test_media_control(config):
+    pressed = []
+    c = WindowsController(config, key_press=pressed.append)
+    assert c.media_control("volume_up", 3) == "Громче."
+    assert pressed == [0xAF] * 6
+    pressed.clear()
+    c.media_control("next", 5)
+    assert pressed == [0xB0]
+
+
+def test_media_control_unavailable(config):
+    def fail(vk):
+        raise OSError("только в Windows")
+    c = WindowsController(config, key_press=fail)
+    assert "Не получилось" in c.media_control("mute")
+
+
+def test_current_time_is_speakable():
+    import datetime as dt
+    assert WindowsController.current_time(dt.datetime(2026, 10, 15, 9, 5)) == \
+        "Сейчас 09:05, 15 октября, четверг."

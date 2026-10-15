@@ -27,6 +27,13 @@ class VoskWakeWord:
         self._model = None
         self._rec = None
 
+    def with_phrases(self, phrases: list[str]) -> "VoskWakeWord":
+        """Второй детектор на той же загруженной модели (например, для «стоп»)."""
+        other = VoskWakeWord(self.model_path, phrases, self.sample_rate)
+        other._model = self._model
+        other.reset()
+        return other
+
     def load(self) -> None:
         if not self.model_path.is_dir():
             raise FileNotFoundError(

@@ -24,6 +24,23 @@ def split_sentences(text: str, max_len: int = 250) -> list[str]:
     return out
 
 
+def beep_tone(sample_rate: int = 22050, freq: float = 880, ms: int = 120):
+    import numpy as np
+    t = np.arange(int(sample_rate * ms / 1000)) / sample_rate
+    fade = np.minimum(1, np.minimum(t, t[-1] - t) * 200)  # без щелчков на краях
+    return (0.25 * np.sin(2 * np.pi * freq * t) * fade).astype(np.float32)
+
+
+def play_beep() -> None:
+    """Короткий сигнал «слушаю» — быстрее, чем произносить слово."""
+    try:
+        import sounddevice as sd  # type: ignore
+        sd.play(beep_tone(), 22050)
+        sd.wait()
+    except Exception as e:
+        log.debug("Сигнал не воспроизведён: %s", e)
+
+
 class Speaker:
     def __init__(self, engine: str = "pyttsx3", rate: int = 185, volume: float = 1.0,
                  voice_hint: str = "ru"):
