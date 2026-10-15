@@ -259,6 +259,8 @@ class App:
                 cfg = vad
             else:
                 follow = float(self.config.get("assistant.follow_up_seconds", 8))
+                if self.assistant.dictation.active:
+                    follow = float(self.config.get("assistant.dictation_pause_seconds", 30))
                 if follow <= 0:
                     return
                 cfg = type(vad)(**{**vad.__dict__, "no_speech_timeout_seconds": follow})
@@ -266,6 +268,9 @@ class App:
             self._state("listening")
             audio = record_command(mic.blocks(self.stop_event), cfg)
             if audio is None:
+                if self.assistant.dictation.active:
+                    self.assistant.dictation.active = False
+                    self._speak(mic, "Диктовка завершена из-за паузы.")
                 return
             text = strip_wake_phrase(asr.transcribe(audio), phrases)
             if not text:

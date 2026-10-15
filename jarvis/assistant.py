@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .config import Config
+from .dictation import Dictation
 from .intents import IntentMatcher
 from .llm import SYSTEM_PROMPT, Conversation, LLMError, OllamaClient
 from .memory import Memory
@@ -37,7 +38,11 @@ BUILTIN_PHRASES = {
     "clear_memory": ["очисти память", "забудь все", "сотри память"],
     "reset_dialog": ["новый диалог", "сбрось диалог", "начнем сначала"],
     "exit": ["заверши работу", "выключись", "выключайся", "заверши программу"],
+    "start_dictation": ["начни диктовку", "режим диктовки", "включи диктовку", "диктовка"],
+    "stop_dictation": ["закончи диктовку", "конец диктовки", "выключи диктовку", "стоп диктовка",
+                       "хватит диктовки"],
 }
+TYPE_PREFIXES = ("напечатай ", "набери ", "впиши ")
 
 
 @dataclass
@@ -50,7 +55,8 @@ class Reply:
 
 class Assistant:
     def __init__(self, config: Config, llm: OllamaClient, registry: ToolRegistry,
-                 memory: Memory, on_setting_changed: Callable[[str, Any], None] | None = None):
+                 memory: Memory, on_setting_changed: Callable[[str, Any], None] | None = None,
+                 dictation: Dictation | None = None):
         self.config = config
         self.llm = llm
         self.registry = registry
@@ -67,6 +73,7 @@ class Assistant:
             float(config.get("security.duplicate_command_window_seconds", 4)),
             int(config.get("security.max_actions_per_minute", 12)))
         self.on_setting_changed = on_setting_changed
+        self.dictation = dictation or Dictation()
         self.intents = IntentMatcher(config.get("windows.apps", {}),
                                      config.get("windows.websites", {}))
 
@@ -79,6 +86,7 @@ class Assistant:
         if self.emergency.matches(text):
             self.emergency.trigger()
             self.confirmations.cancel()
+            self.dictation.active = False
             self.conversation.abort_turn()
             return Reply("Остановлено.", STOP, expect_followup=False)
 
@@ -89,6 +97,9 @@ class Assistant:
             if status == ConfirmationManager.CANCELLED:
                 return Reply("Действие отменено.")
             # просрочено — обрабатываем как обычную реплику
+
+        if self.dictation.active:
+            return self._dictate(text)
 
         if self.guard.is_duplicate_command(text):
             log.info("Повтор команды проигнорирован: %s", text)
@@ -126,7 +137,26 @@ class Assistant:
             return norm in [normalize(p) for p in phrases]
         return contains_phrase(norm, phrases) and len(norm.split()) <= 6
 
+    def _dictate(self, text: str) -> Reply:
+        if self._matches(text, "stop_dictation"):
+            self.dictation.active = False
+            return Reply("Диктовка завершена.", expect_followup=False)
+        error = self.dictation.type_text(text)
+        if error:
+            self.dictation.active = False
+            return Reply(error + " Диктовка остановлена.", expect_followup=False)
+        return Reply("")  # молча печатаем и слушаем дальше
+
     def _builtin(self, text: str) -> Reply | None:
+        lowered = text.strip().lower()
+        for prefix in TYPE_PREFIXES:
+            if lowered.startswith(prefix):
+                # Печатаем ровно то, что сказал пользователь, без участия LLM.
+                error = self.dictation.type_text(text.strip()[len(prefix):])
+                return Reply(error or "", expect_followup=False)
+        if self._matches(text, "start_dictation") and not self._matches(text, "stop_dictation"):
+            self.dictation.active = True
+            return Reply("Диктуйте. Чтобы закончить, скажите «закончи диктовку».")
         if self._matches(text, "cancel"):
             self.conversation.abort_turn()
             return Reply("Хорошо, отменяю.", expect_followup=False)
