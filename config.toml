@@ -1,0 +1,97 @@
+# Конфигурация JARVIS. Значения по умолчанию.
+# Настройки, изменённые голосом, хранятся в SQLite (memory.db) и перекрывают эти.
+
+[assistant]
+name = "Джарвис"
+language = "ru"
+# Сколько последних реплик (пар вопрос/ответ) передавать в LLM.
+max_history_turns = 6
+# Сколько секунд после ответа слушать продолжение без повторного «Джарвис».
+follow_up_seconds = 8
+
+[wake_word]
+# "vosk" — локальное распознавание ключевой фразы (русская модель vosk-model-small-ru).
+# "text" — без микрофона, для отладки (фраза вводится с клавиатуры).
+engine = "vosk"
+phrases = ["джарвис", "джарвиз", "джарвес"]
+vosk_model_path = "models/vosk-model-small-ru-0.22"
+
+[audio]
+sample_rate = 16000
+# None/пусто — устройство по умолчанию. Можно указать индекс или часть имени.
+input_device = ""
+block_ms = 30
+# Определение конца речи (энергетический VAD с адаптивным порогом шума).
+silence_ms_to_stop = 900
+max_command_seconds = 15
+no_speech_timeout_seconds = 6
+vad_energy_ratio = 3.0
+min_speech_ms = 250
+
+[speech_recognition]
+model = "small"
+# "cuda" или "cpu". При ошибке GPU автоматически используется CPU.
+device = "cuda"
+compute_type_gpu = "float16"
+compute_type_cpu = "int8"
+models_dir = "models/whisper"
+beam_size = 1
+
+[llm]
+# Только localhost. Иные адреса блокируются модулем security.
+base_url = "http://127.0.0.1:11434"
+model = "qwen3:8b"
+temperature = 0.4
+# Ограничение длины ответа (токены) и контекста.
+num_predict = 220
+num_ctx = 4096
+timeout_seconds = 90
+# Выгружать LLM из VRAM через N секунд простоя ("5m", "0" — сразу, "-1" — никогда).
+keep_alive = "5m"
+max_tool_calls_per_turn = 3
+
+[tts]
+# "pyttsx3" — системные голоса Windows (SAPI5), ничего не скачивает.
+engine = "pyttsx3"
+rate = 185
+volume = 1.0
+# Часть имени голоса; на Windows русский голос обычно "Irina" или "Pavel".
+voice_hint = "ru"
+
+[memory]
+db_path = "data/memory.db"
+max_facts = 200
+
+[security]
+# Фразы аварийной остановки — обрабатываются до любой другой логики.
+emergency_phrases = ["стоп стоп", "аварийная остановка", "джарвис стоп"]
+confirm_phrases = ["подтверждаю", "да подтверждаю", "подтвердить"]
+cancel_phrases = ["отмена", "отменить", "нет", "не надо"]
+confirmation_timeout_seconds = 20
+# Защита от повторов и циклов.
+duplicate_command_window_seconds = 4
+max_actions_per_minute = 12
+# Сетевые обращения разрешены только к этим хостам (localhost для Ollama).
+allowed_hosts = ["127.0.0.1", "localhost", "::1"]
+
+[windows]
+# Приложения, которые разрешено запускать. Имя → команда/путь.
+[windows.apps]
+"блокнот" = "notepad.exe"
+"калькулятор" = "calc.exe"
+"проводник" = "explorer.exe"
+"диспетчер задач" = "taskmgr.exe"
+"браузер" = "msedge.exe"
+
+[windows.websites]
+# Сайты, которые разрешено открывать в браузере. Имя → URL.
+"ютуб" = "https://www.youtube.com"
+"гитхаб" = "https://github.com"
+"википедия" = "https://ru.wikipedia.org"
+"почта" = "https://mail.google.com"
+
+[windows.search]
+# Каталоги, где разрешён поиск файлов. "~" — домашняя папка пользователя.
+allowed_dirs = ["~/Documents", "~/Desktop", "~/Downloads", "~/Music", "~/Pictures"]
+max_results = 10
+max_scanned_files = 20000

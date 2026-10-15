@@ -1,0 +1,17 @@
+# Ядро
+numpy>=1.26
+
+# Голос
+sounddevice>=0.4.6        # микрофон (PortAudio, входит в wheel для Windows)
+vosk>=0.3.45              # фраза пробуждения, CPU
+faster-whisper>=1.0.3     # распознавание речи (CTranslate2, GPU/CPU)
+pyttsx3>=2.90             # синтез речи через голоса Windows (SAPI5)
+
+# Windows и система
+psutil>=5.9
+Send2Trash>=1.8           # удаление только в корзину
+PyGetWindow>=0.0.9; sys_platform == "win32"
+
+# Для faster-whisper на GPU (RTX 3060): CUDA 12 + cuDNN 9 из pip
+nvidia-cublas-cu12; sys_platform == "win32"
+nvidia-cudnn-cu12>=9,<10; sys_platform == "win32"
