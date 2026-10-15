@@ -1,7 +1,9 @@
 """Безопасное управление Windows.
 
-Всё, что можно сделать, явно перечислено: приложения и сайты берутся только из
-config.toml, поиск и удаление файлов ограничены разрешёнными каталогами,
+Всё, что можно сделать, явно перечислено: приложения берутся из config.toml
+или из ярлыков меню «Пуск» (запускается сам ярлык, после проверки цели), сайты —
+только http/https в браузере, поиск, открытие и удаление файлов ограничены
+разрешёнными каталогами, программы и скрипты из папок пользователя не открываются,
 команды не проходят через оболочку (никакого shell=True / PowerShell).
 """
 
@@ -10,6 +12,7 @@ from __future__ import annotations
 import datetime as _dt
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -17,9 +20,13 @@ import webbrowser
 from pathlib import Path
 from typing import Any, Callable
 
+from .app_finder import (DEFAULT_URL_SCHEMES, KNOWN_SITES, Shortcut, StartMenuIndex,
+                         is_risky_file, parse_lnk, parse_url_file, site_url,
+                         unsafe_target_reason, url_scheme_allowed)
 from .config import Config
+from .fuzzy import similarity
 from .security import normalize
-from .tool_registry import Param, Tool, ToolRegistry
+from .tool_registry import Choice, Param, Tool, ToolRegistry
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -68,6 +75,12 @@ def _default_power(action: str) -> None:
 
 
 SHUTDOWN_DELAY = 60
+OPEN_KINDS = ["any", "app", "site", "folder", "file"]
+# Порог похожести для файлов и папок пользователя и для известных сайтов.
+PATH_THRESHOLD = 0.8
+SITE_THRESHOLD = 0.85
+
+Candidate = tuple[float, str, Callable[[], str]]
 
 
 def _default_launcher(command: str) -> None:
@@ -140,7 +153,8 @@ class WindowsController:
                  window_backend: WindowBackend | None = None,
                  trash: Callable[[str], None] | None = None,
                  key_press: Callable[[int], None] | None = None,
-                 power: Callable[[str], None] | None = None):
+                 power: Callable[[str], None] | None = None,
+                 start_menu: StartMenuIndex | None = None):
         self.apps: dict[str, str] = config.get("windows.apps", {})
         self.websites: dict[str, str] = config.get("windows.websites", {})
         self.allowed_dirs = [Path(d).expanduser().resolve()
@@ -154,6 +168,11 @@ class WindowsController:
         self.key_press = key_press or _default_key_press
         self.power = power or _default_power
         self.folders: dict[str, str] = config.get("windows.folders", {})
+        dirs = config.get("windows.launcher.start_menu_dirs")
+        self.start_menu = start_menu or StartMenuIndex(
+            [Path(d).expanduser() for d in dirs] if dirs is not None else None,
+            float(config.get("windows.launcher.cache_seconds", 600)))
+        self.url_schemes = config.get("windows.launcher.url_schemes", DEFAULT_URL_SCHEMES)
 
     # --- поиск по белым спискам ---
     # Частичное совпадение — только для осмысленных запросов: иначе «а» или пробел
@@ -186,44 +205,201 @@ class WindowsController:
     # --- приложения и сайты ---
     def open_app(self, name: str) -> str:
         found = self._lookup(name, self.apps)
-        if not found:
-            return f"Приложение «{name}» не в списке разрешённых. Доступны: {', '.join(self.apps)}."
-        key, command = found
-        try:
-            self.launch(command)
-        except OSError as e:
-            return self._launch_error(key, command, "windows.apps", e)
-        return f"Запускаю {key}."
+        if found:
+            key, command = found
+            try:
+                self.launch(command)
+            except OSError as e:
+                return self._launch_error(key, command, "windows.apps", e)
+            return f"Запускаю {key}."
+        result = self._pick(self._app_candidates(name))
+        return result or (f"Программа «{name}» не в списке разрешённых и не найдена в меню «Пуск». "
+                          f"Из списка доступны: {', '.join(self.apps)}.")
 
     def open_website(self, name: str) -> str:
         found = self._lookup(name, self.websites)
-        if not found:
-            return f"Сайт «{name}» не в списке разрешённых. Доступны: {', '.join(self.websites)}."
-        key, url = found
+        if found:
+            key, url = found
+            if not url.startswith(("https://", "http://")):
+                return f"Адрес сайта {key} в настройках некорректен."
+            return self._open_url(key, url, "windows.websites")
+        result = self._pick(self._site_candidates(name))
+        return result or (f"Сайт «{name}» не в списке и не похож на адрес. "
+                          "Назовите адрес, например «зайди на habr.com».")
+
+    def _open_url(self, label: str, url: str, section: str = "windows.websites") -> str:
+        # Только http/https и только в браузере: сам помощник страницу не загружает.
         if not url.startswith(("https://", "http://")):
-            return f"Адрес сайта {key} в настройках некорректен."
+            return f"Адрес {url} не открываю: разрешены только http и https."
         try:
             opened = self.open_url(url)
         except OSError as e:
-            return self._launch_error(key, url, "windows.websites", e)
+            return self._launch_error(label, url, section, e)
         if opened is False:  # webbrowser.open: браузер не найден
             return "Не удалось открыть сайт: браузер по умолчанию не найден."
-        return f"Открываю {key}."
+        return f"Открываю {label}."
 
-    # --- папки ---
-    def open_folder(self, name: str) -> str:
-        found = self._lookup(name, self.folders)
-        if not found:
-            return f"Папка «{name}» не в списке. Доступны: {', '.join(self.folders)}."
-        key, raw = found
-        path = Path(raw).expanduser()
-        if not path.is_dir():
-            return f"Папка {key} не найдена на диске."
+    def _launch_shortcut(self, sc: Shortcut) -> str:
+        if sc.path.suffix.lower() == ".url":
+            try:
+                url = parse_url_file(sc.path.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                url = None
+            if not url or not url_scheme_allowed(url, self.url_schemes):
+                return f"Ярлык {sc.name} ведёт на неразрешённый адрес, не открываю."
+        else:
+            try:
+                target, args = parse_lnk(sc.path.read_bytes()[:1 << 20])
+            except OSError:
+                target, args = None, ""
+            reason = unsafe_target_reason(target, args)
+            if reason:
+                return f"Не запускаю {sc.name}: {reason}."
+        try:
+            self.launch(str(sc.path))  # сам ярлык через ShellExecute, без оболочки
+        except OSError as e:
+            return f"Не удалось запустить {sc.name}: {e.strerror or e}."
+        return f"Запускаю {sc.name}."
+
+    # --- поиск кандидатов для «открой …» ---
+    def _app_candidates(self, name: str) -> list[Candidate]:
+        out: list[Candidate] = []
+        for key, command in self.apps.items():
+            score = similarity(name, key)
+            if score >= 0.99:
+                out.append((1.01, key, lambda k=key: self.open_app(k)))
+        for score, sc in self.start_menu.search(name):
+            out.append((score, sc.name, lambda sc=sc: self._launch_shortcut(sc)))
+        return out
+
+    def _site_candidates(self, name: str) -> list[Candidate]:
+        url = site_url(name)
+        if url:
+            host = re.sub(r"^https?://(?:www\.)?", "", url).rstrip("/")
+            return [(1.01, host, lambda: self._open_url(host, url))]
+        out: list[Candidate] = []
+        for table in (self.websites, KNOWN_SITES):
+            for key, address in table.items():
+                score = similarity(name, key) + (0.005 if table is self.websites else 0)
+                if score >= SITE_THRESHOLD:
+                    out.append((min(score, 1.0), f"сайт {key}",
+                                lambda k=key, a=address: self._open_url(k, a)))
+        return out
+
+    def _path_candidates(self, name: str, want: str) -> list[Candidate]:
+        out: list[Candidate] = []
+        if want in ("any", "folder"):
+            for key, raw in self.folders.items():
+                if similarity(name, key) >= 0.99 and Path(raw).expanduser().is_dir():
+                    out.append((1.01, f"папка {key}",
+                                lambda k=key, r=raw: self._open_path(Path(r).expanduser(), k)))
+        for score, path in self.find_user_paths(name, want):
+            label = ("папка " if path.is_dir() else "файл ") + path.name
+            if path.parent.name:
+                label += f" в папке {path.parent.name}"
+            out.append((score, label, lambda p=path: self._open_path(p, p.name)))
+        return out
+
+    def find_user_paths(self, query: str, want: str = "any") -> list[tuple[float, Path]]:
+        """Файлы и папки в разрешённых каталогах, похожие по имени на query."""
+        if len(normalize(query)) < 2:
+            return []
+        found: list[tuple[float, Path]] = []
+        scanned = 0
+        for base in self.allowed_dirs:
+            if not base.is_dir():
+                continue
+            for root, dirs, files in os.walk(base, followlinks=False):
+                dirs[:] = [d for d in dirs if not d.startswith(".")]
+                names = [(d, True) for d in dirs] if want in ("any", "folder") else []
+                names += [(f, False) for f in files] if want in ("any", "file") else []
+                for fname, is_dir in names:
+                    scanned += 1
+                    path = Path(root) / fname
+                    if not is_dir and is_risky_file(path):
+                        continue
+                    stem = fname if is_dir else path.stem
+                    score = similarity(query, re.sub(r"[_\-.]+", " ", stem))
+                    if score >= PATH_THRESHOLD:
+                        found.append((score, path))
+                if scanned >= self.max_scanned:
+                    break
+        found.sort(key=lambda x: -x[0])
+        return found[: self.max_results]
+
+    def _open_path(self, path: Path, label: str) -> str:
+        is_dir = path.is_dir()
+        if not is_dir and not path.is_file():
+            return f"{label} не найден на диске."
+        if not is_dir and (not self._inside_allowed(path) or is_risky_file(path.resolve())):
+            return f"Файл {label} не открываю: это программа, скрипт или он вне разрешённых папок."
         try:
             self.launch(str(path))
         except OSError as e:
-            return self._launch_error(key, str(path), "windows.folders", e)
-        return f"Открываю папку {key}."
+            return f"Не удалось открыть {label}: {e.strerror or e}."
+        return f"Открываю {'папку' if is_dir else 'файл'} {label}."
+
+    @staticmethod
+    def _pick(cands: list[Candidate], verb: str = "открыть") -> str | None:
+        """Лучший вариант — выполнить; несколько равных — переспросить."""
+        if not cands:
+            return None
+        best: dict[str, Candidate] = {}
+        for c in sorted(cands, key=lambda c: -c[0]):
+            best.setdefault(normalize(c[1]), c)
+        ranked = list(best.values())
+        top = ranked[0][0]
+        margin = 0.0 if top >= 0.99 else 0.03
+        close = [c for c in ranked if c[0] >= top - margin][:5]
+        if len(close) == 1:
+            return close[0][2]()
+        listing = "; ".join(f"{i}) {c[1]}" for i, c in enumerate(close, 1))
+        return Choice(f"Нашёл несколько вариантов: {listing}. Какой {verb}? "
+                      "Скажите номер или название.", [(c[1], c[2]) for c in close])
+
+    def open_anything(self, name: str, kind: str = "any") -> str:
+        """«Открой …»: программа, сайт, папка или файл — что больше похоже."""
+        if kind not in OPEN_KINDS:
+            kind = "any"
+        cands: list[Candidate] = []
+        if kind in ("any", "site"):
+            url_cands = self._site_candidates(name) if site_url(name) else []
+            if url_cands:  # сказан адрес — это точно сайт
+                return self._pick(url_cands) or ""
+        if kind in ("any", "app"):
+            cands += self._app_candidates(name)
+        if kind in ("any", "site"):
+            cands += self._site_candidates(name)
+        if kind in ("folder", "file") or not cands or max(c[0] for c in cands) < 0.9:
+            cands += self._path_candidates(name, kind if kind in ("folder", "file") else "any")
+        result = self._pick(cands)
+        if result is not None:
+            return result
+        what = {"app": "программу", "site": "сайт", "folder": "папку", "file": "файл"}.get(kind)
+        if what:
+            return f"Не нашёл {what} «{name}»."
+        return f"Не нашёл «{name}» ни среди программ, ни среди сайтов, папок и файлов."
+
+    # --- папки и файлы ---
+    def open_folder(self, name: str) -> str:
+        found = self._lookup(name, self.folders)
+        if found:
+            key, raw = found
+            path = Path(raw).expanduser()
+            if not path.is_dir():
+                return f"Папка {key} не найдена на диске."
+            try:
+                self.launch(str(path))
+            except OSError as e:
+                return self._launch_error(key, str(path), "windows.folders", e)
+            return f"Открываю папку {key}."
+        result = self._pick(self._path_candidates(name, "folder"))
+        return result or (f"Папка «{name}» не в списке и не найдена в папках пользователя. "
+                          f"Из списка доступны: {', '.join(self.folders)}.")
+
+    def open_file(self, name: str) -> str:
+        result = self._pick(self._path_candidates(name, "file"))
+        return result or f"Файл «{name}» не найден в разрешённых папках."
 
     # --- питание ---
     def power_action(self, action: str) -> str:
@@ -353,13 +529,23 @@ class WindowsController:
     # --- регистрация инструментов ---
     def register_tools(self, registry: ToolRegistry) -> None:
         registry.register(Tool(
-            "open_app", "Запустить приложение из списка разрешённых: " + ", ".join(self.apps),
+            "open_app", "Запустить программу: из списка (" + ", ".join(self.apps)
+            + ") или установленную (ищется по меню «Пуск»)",
             lambda name: self.open_app(name),
-            {"name": Param("string", "Название приложения")}))
+            {"name": Param("string", "Название программы")}))
         registry.register(Tool(
-            "open_website", "Открыть сайт из списка разрешённых: " + ", ".join(self.websites),
+            "open_website", "Открыть сайт в браузере по названию или адресу (только http/https)",
             lambda name: self.open_website(name),
-            {"name": Param("string", "Название сайта")}))
+            {"name": Param("string", "Название сайта или адрес, например habr.com")}))
+        registry.register(Tool(
+            "open_file", "Открыть файл пользователя по имени (поиск в папках пользователя)",
+            lambda name: self.open_file(name),
+            {"name": Param("string", "Имя файла или его часть", max_length=100)}))
+        registry.register(Tool(
+            "open_anything", "Открыть что угодно по названию: программу, сайт, папку или файл",
+            lambda name, kind="any": self.open_anything(name, kind),
+            {"name": Param("string", "Название"),
+             "kind": Param("string", "Что именно открыть", required=False, enum=OPEN_KINDS)}))
         registry.register(Tool(
             "search_files", "Найти файлы по части имени в папках пользователя",
             lambda query: self.search_files(query),
@@ -380,7 +566,8 @@ class WindowsController:
             {"action": Param("string", "Действие", enum=list(MEDIA_KEYS)),
              "steps": Param("integer", "Сколько шагов громкости (1-10)", required=False)}))
         registry.register(Tool(
-            "open_folder", "Открыть папку в проводнике: " + ", ".join(self.folders),
+            "open_folder", "Открыть папку в проводнике: " + ", ".join(self.folders)
+            + " или любую папку пользователя по имени",
             lambda name: self.open_folder(name),
             {"name": Param("string", "Название папки")}))
         registry.register(Tool(

@@ -127,6 +127,16 @@ audit_log = "data/actions.log"
 "изображения" = "~/Pictures"
 "видео" = "~/Videos"
 
+[windows.launcher]
+# «Открой телеграм»: программы, которых нет в [windows.apps], ищутся по ярлыкам
+# меню «Пуск» (%ProgramData% и %APPDATA%\Microsoft\Windows\Start Menu\Programs).
+# Список ярлыков кэшируется на столько секунд.
+cache_seconds = 600
+# Схемы адресов, разрешённые в .url-ярлыках (игры Steam/Epic и т.п.).
+url_schemes = ["http", "https", "steam", "com.epicgames.launcher", "uplay", "origin2", "battlenet", "ms-settings"]
+# Свои каталоги с ярлыками вместо стандартных (обычно не нужно):
+# start_menu_dirs = ["C:/Users/Me/Ярлыки"]
+
 [windows.search]
 # Каталоги, где разрешён поиск файлов. "~" — домашняя папка пользователя.
 allowed_dirs = ["~/Documents", "~/Desktop", "~/Downloads", "~/Music", "~/Pictures"]

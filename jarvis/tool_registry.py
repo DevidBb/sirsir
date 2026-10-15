@@ -56,6 +56,21 @@ class ToolError(ValueError):
     pass
 
 
+class Choice(str):
+    """Результат «нашлось несколько вариантов»: текст вопроса и варианты.
+
+    Это обычная строка (её видит LLM и слышит пользователь), но помощник
+    запоминает варианты и следующей репликой («второй», «Telegram») выбирает один.
+    """
+
+    options: list[tuple[str, Callable[[], str]]]
+
+    def __new__(cls, text: str, options: list[tuple[str, Callable[[], str]]]) -> "Choice":
+        obj = super().__new__(cls, text)
+        obj.options = list(options)
+        return obj
+
+
 _PY_TYPES = {"string": str, "integer": int, "boolean": bool}
 
 

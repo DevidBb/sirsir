@@ -45,8 +45,13 @@ def test_open_app_allowlist(ctl):
 def test_open_website_allowlist(ctl):
     ctl.open_website("ютуб")
     assert ctl.opened == ["https://www.youtube.com"]
-    assert "не в списке" in ctl.open_website("evil.example.com")
-    assert len(ctl.opened) == 1
+    # Любой сайт по адресу — только https в браузере; прочие схемы и не-адреса — нет.
+    assert ctl.open_website("example.com") == "Открываю example.com."
+    assert ctl.opened[-1] == "https://example.com"
+    for bad in ("javascript:alert(1)", "file:///C:/Windows", "C:\\Windows\\cmd.exe",
+                "ftp://example.com", "user@evil.com", "какой-то сайт"):
+        assert not ctl.open_website(bad).startswith("Открываю"), bad
+    assert len(ctl.opened) == 2
 
 
 def test_search_files_only_in_allowed(ctl, config, tmp_path):

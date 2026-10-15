@@ -3,7 +3,7 @@
 Не зависит от микрофона и динамиков — принимает текст, возвращает Reply.
 Порядок обработки:
 1. Аварийная остановка.
-2. Ответ на ожидающее подтверждение.
+2. Ответ на ожидающее подтверждение или выбор из нескольких вариантов.
 3. Защита от повторов.
 4. Встроенные голосовые команды (без LLM).
 5. Диалог с LLM и вызовы инструментов из реестра.
@@ -13,18 +13,20 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
 from .config import Config
 from .dictation import Dictation
+from .fuzzy import similarity
 from .intents import IntentMatcher
 from .llm import (SYSTEM_PROMPT, Conversation, LLMError, OllamaClient, SentenceStream,
                   looks_like_tool_text)
 from .memory import Memory
 from .security import (CommandGuard, ConfirmationManager, EmergencyStop,
                        contains_phrase, normalize)
-from .tool_registry import ToolError, ToolRegistry
+from .tool_registry import Choice, ToolError, ToolRegistry
 
 log = logging.getLogger(__name__)
 # Журнал выполненных действий (пишется в data/actions.log, см. main.py).
@@ -51,8 +53,17 @@ BUILTIN_PHRASES = {
                        "хватит диктовки"],
 }
 TYPE_PREFIXES = ("напечатай ", "набери ", "впиши ")
+# Ответ на «Нашёл несколько вариантов…»: номер варианта.
+ORDINALS = {
+    0: ("первый", "первая", "первое", "первую", "один", "1"),
+    1: ("второй", "вторая", "второе", "вторую", "два", "2"),
+    2: ("третий", "третья", "третье", "третью", "три", "3"),
+    3: ("четвертый", "четвертая", "четвертое", "четвертую", "четыре", "4"),
+    4: ("пятый", "пятая", "пятое", "пятую", "пять", "5"),
+}
 
-HELP_TEXT = ("Я умею: открывать программы, сайты и папки; искать файлы; ставить таймеры и "
+HELP_TEXT = ("Я умею: открывать любые установленные программы, сайты, папки и файлы; "
+             "искать файлы; ставить таймеры и "
              "напоминания; записывать заметки; считать; управлять громкостью и музыкой; "
              "сворачивать окна; печатать под диктовку; блокировать и выключать компьютер; "
              "рассказывать о системе и просто отвечать на вопросы. "
@@ -90,6 +101,8 @@ class Assistant:
             int(config.get("security.max_actions_per_minute", 12)))
         self.on_setting_changed = on_setting_changed
         self.dictation = dictation or Dictation()
+        self._pending_choice: tuple[Choice, float] | None = None
+        self.clock = time.monotonic
         self.intents = IntentMatcher(config.get("windows.apps", {}),
                                      config.get("windows.websites", {}),
                                      config.get("windows.folders", {}))
@@ -131,6 +144,11 @@ class Assistant:
                 return Reply(answer)
             # просрочено — обрабатываем как обычную реплику
 
+        if self._pending_choice is not None:
+            chosen = self._resolve_choice(text)
+            if chosen is not None:
+                return chosen
+
         if self.dictation.active:
             return self._dictate(text)
 
@@ -163,6 +181,46 @@ class Assistant:
         self.conversation.add({"role": "assistant", "content": outcome})
         self.conversation.end_turn()
         return Reply(outcome)
+
+    def _resolve_choice(self, text: str) -> Reply | None:
+        """Ответ на «Нашёл несколько вариантов…». None — это не выбор, обычная реплика."""
+        choice, asked_at = self._pending_choice  # type: ignore[misc]
+        self._pending_choice = None
+        if self.clock() - asked_at > self.confirmations.timeout:
+            return None
+        norm = normalize(text)
+        if self._matches(text, "cancel") or norm in [normalize(p) for p in
+                                                      self.confirmations.cancel_phrases]:
+            return Reply("Хорошо, не открываю.", expect_followup=False)
+        words = norm.split()
+        index = None
+        if len(words) <= 3:
+            for i, forms in ORDINALS.items():
+                if i < len(choice.options) and set(forms).intersection(words):
+                    index = i
+                    break
+            if index is None and {"последний", "последнюю", "последнее", "последняя"}.intersection(words):
+                index = len(choice.options) - 1
+        if index is None:
+            scored = sorted(((similarity(text, label), i) for i, (label, _) in
+                             enumerate(choice.options)), reverse=True)
+            if scored and scored[0][0] >= 0.6 and (len(scored) == 1 or scored[0][0] - scored[1][0] >= 0.05):
+                index = scored[0][1]
+        if index is None:
+            return None
+        label, action = choice.options[index]
+        if not self.guard.allow_action():
+            return Reply("Слишком много действий за минуту, действие заблокировано.")
+        try:
+            result = action()
+        except Exception as e:  # действие не должно ронять помощника
+            log.exception("Ошибка при выборе варианта %s", label)
+            result = f"Не удалось выполнить действие: {e}"
+        audit.info("выбор «%s» -> %s", label, result[:200])
+        self.conversation.begin_turn(text)
+        self.conversation.add({"role": "assistant", "content": result})
+        self.conversation.end_turn()
+        return Reply(result)
 
     # ------------------------------------------------------------------
     def _matches(self, text: str, key: str) -> bool:
@@ -314,6 +372,8 @@ class Assistant:
             if not isinstance(result, str):  # None или число от обработчика не должны ронять ответ
                 result = "Готово." if result is None else str(result)
             audit.info("%s %s -> %s", name, json.dumps(clean, ensure_ascii=False), result[:200])
+            if isinstance(result, Choice):  # переспросим: следующая реплика — выбор
+                self._pending_choice = (result, self.clock())
             return result
 
         if tool.dangerous:

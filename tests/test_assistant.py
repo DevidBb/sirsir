@@ -141,10 +141,11 @@ def test_quick_intent_skips_llm(config):
     assert len(a.conversation) == 1
 
 
-def test_unknown_app_goes_to_llm(config):
-    a = build(config, [text("Такого приложения нет в списке.")])
-    assert a.handle("открой фотошоп").text == "Такого приложения нет в списке."
-    assert a.launched == []
+def test_unknown_app_searched_without_llm(config):
+    # «Открой …» без белого списка ищется в меню «Пуск», сайтах и папках, а не в LLM.
+    a = build(config, [text("не должно понадобиться")])
+    assert "Не нашёл «фотошоп»" in a.handle("открой фотошоп").text
+    assert a.launched == [] and a.fake.requests == []
 
 
 def test_actions_are_audited(config, caplog):

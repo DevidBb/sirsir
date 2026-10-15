@@ -16,6 +16,8 @@ def config(tmp_path):
     allowed.mkdir()
     cfg.set("windows.search.allowed_dirs", [str(allowed)])
     cfg.set("memory.db_path", str(tmp_path / "memory.db"))
+    # Не трогать настоящее меню «Пуск» (на Windows CI оно есть).
+    cfg.set("windows.launcher.start_menu_dirs", [])
     return cfg
 
 

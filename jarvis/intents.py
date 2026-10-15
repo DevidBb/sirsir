@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from .app_finder import FILE_EXTENSIONS
 from .calculator import phrase_to_expression
 from .reminders import parse_duration
 from .security import normalize
@@ -22,7 +23,15 @@ class Intent:
     args: dict[str, Any] = field(default_factory=dict)
 
 
-OPEN_RE = re.compile(r"^(?:открой|запусти|включи|открыть|запустить|зайди на|перейди на)(?: мне)? (.+)$")
+OPEN_RE = re.compile(r"^(открой|запусти|включи|открыть|запустить|зайди на|перейди на|зайди в)(?: мне)? (.+)$")
+# «Включи …» — чаще про музыку и режимы, поэтому «что угодно» открываем только этими глаголами.
+OPEN_ANY_VERBS = ("открой", "запусти", "открыть", "запустить", "зайди на", "перейди на", "зайди в")
+OPEN_KIND_WORDS = {"сайт": "site", "приложение": "app", "программу": "app", "игру": "app",
+                   "папку": "folder", "файл": "file", "документ": "file"}
+# Адрес сайта в исходной фразе (после нормализации точки пропадают): «habr.com», «vk.com/feed».
+DOMAIN_RE = re.compile(r"(?:https?://)?[\w-]+(?:\.[\w-]+)+(?:/[^\s,!?]*)?", re.I)
+# Это не «открой что угодно»: окно, вкладку и т.п. открывают другие команды или LLM.
+OPEN_ANY_STOP = {"окно", "вкладку", "новую вкладку", "глаза", "дверь", "секрет"}
 # Вежливые слова не меняют смысла команды: «открой, пожалуйста, блокнот».
 POLITE_RE = re.compile(r"\b(?:пожалуйста|плиз)\b")
 TIME_PHRASES = ("который час", "сколько времени", "какое время", "какое сегодня число",
@@ -116,7 +125,8 @@ class IntentMatcher:
                 return Intent("media_control", {"action": action})
         m = OPEN_RE.match(norm)
         if m:
-            target = re.sub(r"^(?:сайт|приложение|программу|папку) ", "", m.group(1)).strip()
+            raw_target = m.group(2)
+            target = re.sub(r"^(?:сайт|приложение|программу|папку) ", "", raw_target).strip()
             app = _lookup(target, self.apps)
             if app:
                 return Intent("open_app", {"name": app})
@@ -126,7 +136,27 @@ class IntentMatcher:
             folder = _lookup(target, self.folders)
             if folder:
                 return Intent("open_folder", {"name": folder})
+            if m.group(1) in OPEN_ANY_VERBS:
+                return self._open_anything(text, raw_target)
         return None
+
+    @staticmethod
+    def _open_anything(text: str, target: str) -> Intent | None:
+        """«Открой телеграм», «зайди на habr.com», «открой папку отчёты» — без белого списка."""
+        kind = "any"
+        first, _, rest = target.partition(" ")
+        if first in OPEN_KIND_WORDS and rest:
+            kind, target = OPEN_KIND_WORDS[first], rest
+        if target in OPEN_ANY_STOP or not target:
+            return None
+        domain = DOMAIN_RE.search(text)
+        if (domain and kind in ("any", "site") and not domain.group(0)[0].isdigit()
+                and domain.group(0).rstrip(".").rsplit(".", 1)[-1].lower() not in FILE_EXTENSIONS):
+            return Intent("open_anything", {"name": domain.group(0).rstrip("."), "kind": "site"})
+        args: dict[str, Any] = {"name": target}
+        if kind != "any":
+            args["kind"] = kind
+        return Intent("open_anything", args)
 
     @staticmethod
     def _match_reminder(norm: str) -> Intent | None:
