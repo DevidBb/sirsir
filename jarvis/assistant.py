@@ -111,9 +111,9 @@ COMPLEX_RE = re.compile(
 
 # Только настоящие многошаговые инструкции должны обходить быстрый поиск.
 MULTISTEP_RE = re.compile(
-    r"\\b(?:сравн|сопостав|проанализ|анализ|вывод|резюм|итог|объясн|прочита|прочти|изуч|выбер|"
+    r"\b(?:сравн|сопостав|проанализ|анализ|вывод|резюм|итог|объясн|прочита|прочти|изуч|выбер|"
     r"расскаж|перескаж|составь|оцени|проверь|compare|summar|analy|conclu|explain|read|review|"
-    r"then|after that|based on that|sources)\\w*", re.I)
+    r"then|after that|based on that|sources)\w*", re.I)
 
 
 def is_complex_request(query: str) -> bool:
