@@ -114,6 +114,7 @@ class ClaudeAgentBackend:
         self._client_factory = client_factory
         self.last_error = ""
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
         self._jobs: asyncio.Queue | None = None
         self._start_lock = threading.Lock()
         self._client: Any = None
@@ -150,7 +151,8 @@ class ClaudeAgentBackend:
                     ready.set()
                     loop.run_until_complete(self._owner())
                     loop.close()
-                threading.Thread(target=main, daemon=True, name="claude-agent").start()
+                self._thread = threading.Thread(target=main, daemon=True, name="claude-agent")
+                self._thread.start()
                 ready.wait(10)
             return self._loop
 
@@ -196,12 +198,16 @@ class ClaudeAgentBackend:
                 log.info("Claude: предварительный запуск не удался: %s", e)
         threading.Thread(target=run, daemon=True, name="claude-warm-up").start()
 
-    def close(self) -> None:
+    def close(self, wait: float = 0) -> None:
+        """wait — сколько секунд ждать, пока Claude Code завершится. При выходе из Джарвиса
+        нужно ждать: иначе поток-демон обрывается вместе с процессом, не закрыв клиента."""
         if self._loop is not None and not self._loop.is_closed():
             try:
                 self._loop.call_soon_threadsafe(self._jobs.put_nowait, None)
             except RuntimeError:
                 pass
+        if wait and self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join(wait)
 
     # --- ход диалога ---
     def run(self, assistant: "Assistant", text: str,
@@ -331,6 +337,8 @@ class ClaudeAgentBackend:
             setting_sources=[], system_prompt=self._system_prompt(assistant, agents),
             model=self.model or None, max_turns=self.max_turns, resume=self.session_id,
             cwd=str(self.work_dir), include_partial_messages=True, can_use_tool=deny_other,
+            # Без этого при падении Claude Code в логе только «Check stderr output for details».
+            stderr=lambda line: log.info("Claude Code: %s", line.rstrip()),
             # Агенты — синхронно: иначе Claude Code запускает их в фоне и ход заканчивается без их отчётов.
             env={"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"})
 

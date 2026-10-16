@@ -546,7 +546,7 @@ class App:
 
     def close(self) -> None:
         if self.assistant.agent_backend is not None:
-            self.assistant.agent_backend.close()
+            self.assistant.agent_backend.close(wait=5)
         self.reminders.stop()
         self.schedules.stop()
         if self.mcp is not None:
