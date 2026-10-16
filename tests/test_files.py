@@ -18,7 +18,7 @@ def env(config, tmp_path):
     root = tmp_path / "proj"
     (root / "src").mkdir(parents=True)
     (root / "src" / "app.py").write_text("def main():\n    return 1\n", encoding="utf-8")
-    (root / "README.md").write_text("Привет\r\nмир\r\n", encoding="utf-8")
+    (root / "README.md").write_bytes("Привет\r\nмир\r\n".encode("utf-8"))  # CRLF как есть
     (root / ".env").write_text("TOKEN=secret", encoding="utf-8")
     (root / ".git").mkdir()
     (root / ".git" / "config").write_text("x", encoding="utf-8")
@@ -63,7 +63,7 @@ def test_edit_needs_confirmation_with_diff_and_backup(env):
     tools, assistant, root, tmp_path, events = env
     reply = assistant._run_tool("files_edit", {"path": "src/app.py", "old_text": "return 1",
                                                "new_text": "return 2"})
-    assert isinstance(reply, Reply) and "изменить файл proj/src/app.py (+1 −1 строк)" in reply.text
+    assert isinstance(reply, Reply) and f"изменить файл {os.path.join('proj', 'src', 'app.py')} (+1 −1 строк)" in reply.text
     assert "return 1" in (root / "src" / "app.py").read_text()  # до подтверждения не меняется
     confirm = [e for e in events if e["type"] == "confirm"][0]
     assert confirm["details"]["kind"] == "diff" and "+    return 2" in confirm["details"]["diff"]
