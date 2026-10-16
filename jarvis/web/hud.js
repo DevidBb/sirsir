@@ -380,6 +380,19 @@
     } catch (e) { addSystem("Не удалось загрузить память: " + e.message, true); }
   }
   $("memRefresh").onclick = loadMemory;
+  $("memImportFile").onchange = async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!confirm(`Добавить в память записи из «${file.name}»?`)) return;
+    try {
+      const r = await fetch("/api/memory/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: await file.text() });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || String(r.status));
+      addSystem("Импорт памяти: " + d.text);
+    } catch (err) { addSystem("Импорт не выполнен: " + err.message, true); }
+    loadMemory();
+  };
 
   // ---------- расписание ----------
   const RUN_STATUS = { ok: "✓", error: "✗", skipped: "пропущено", stopped: "остановлено" };

@@ -119,6 +119,13 @@
       <h3>Итоги задач</h3><ul class="mem-list" id="tasks"></ul>
       <h3>Напоминания</h3><ul class="mem-list" id="reminders"></ul>
       <h3>Журнал действий</h3><ul class="log-list" id="actions"></ul>
+      <h3>Перенос памяти</h3>
+      <div class="sched-row">
+        <a class="btn" id="memExport" href="/api/memory/export" download>Скачать копию (JSON)</a>
+        <label class="btn" for="memImportFile">Загрузить из файла…</label>
+        <input type="file" id="memImportFile" accept="application/json,.json" hidden>
+      </div>
+      <p class="muted small">Импорт только добавляет записи, повторы пропускаются. Плановые задачи из файла приходят выключенными; из настроек переносятся только голос и выбор модели.</p>
     </div>
 
     <div class="panel" id="tab-settings">

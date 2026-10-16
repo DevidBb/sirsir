@@ -29,6 +29,7 @@ log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).resolve().parent / "web"
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+MAX_IMPORT_BYTES = 5_000_000
 # Инструменты, которые кнопки интерфейса могут вызвать напрямую (без модели).
 UI_TOOLS = {"open_result", "browser_tabs", "browser_switch_tab", "browser_screenshot", "read_page",
             "browser_back"}
@@ -315,6 +316,30 @@ def create_app(runtime: Runtime, port: int):
                              "tasks": mem.list_tasks(),
                              "settings": mem.all_settings(), "actions": _tail_actions(app_core.config)})
 
+    async def memory_export(request: Request):
+        if (resp := guard(request)) is not None:
+            return resp
+        from .memory_io import export_memory
+        data = await asyncio.to_thread(export_memory, app_core.memory, getattr(app_core, "schedules", None))
+        name = time.strftime("jarvis-memory-%Y%m%d-%H%M.json")
+        return JSONResponse(data, headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    async def memory_import(request: Request):
+        """Импорт только добавляет записи; плановые задачи — выключенными."""
+        if (resp := guard(request)) is not None:
+            return resp
+        from .memory_io import import_memory, summary
+        body = await request.body()
+        if len(body) > MAX_IMPORT_BYTES:
+            return JSONResponse({"ok": False, "error": "файл больше 5 МБ"}, status_code=413)
+        try:
+            data = json.loads(body.decode("utf-8-sig"))
+            stats = await asyncio.to_thread(import_memory, app_core.memory, data, getattr(app_core, "schedules", None))
+        except (ValueError, UnicodeDecodeError) as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+        log.info("Импорт памяти: %s", stats)
+        return JSONResponse({"ok": True, "stats": stats, "text": summary(stats)})
+
     async def memory_item(request: Request):
         if (resp := guard(request)) is not None:
             return resp
@@ -538,6 +563,8 @@ def create_app(runtime: Runtime, port: int):
         Route("/api/status", status),
         Route("/api/memory", memory),
         Route("/api/memory/facts", add_fact, methods=["POST"]),
+        Route("/api/memory/export", memory_export),
+        Route("/api/memory/import", memory_import, methods=["POST"]),
         Route("/api/memory/{kind}/{item_id:int}", memory_item, methods=["DELETE", "PUT"]),
         Route("/api/settings", settings, methods=["POST"]),
         Route("/api/skills/reload", skills_reload, methods=["POST"]),

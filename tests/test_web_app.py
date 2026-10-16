@@ -1,5 +1,6 @@
 """Сервер HUD: защита Origin/Host, WebSocket-диалог, отмена, память, настройки."""
 
+import json
 import pytest
 
 pytest.importorskip("starlette")
@@ -195,3 +196,16 @@ def test_schedules_api_and_run_now(server):
     assert client.put(f"/api/schedules/{sid}", json={"enabled": False}).json()["items"][0]["enabled"] is False
     assert client.delete(f"/api/schedules/{sid}").json()["items"] == []
     assert client.delete(f"/api/schedules/{sid}").status_code == 404
+
+
+def test_memory_export_import_api(server):
+    client, app, _ = server
+    app.memory.add_fact("люблю зелёный чай", "preference")
+    exported = client.get("/api/memory/export")
+    assert "attachment" in exported.headers["content-disposition"]
+    data = exported.json()
+    app.memory.clear_facts()
+    r = client.post("/api/memory/import", content=json.dumps(data, ensure_ascii=False).encode("utf-8"))
+    assert r.json()["ok"] and r.json()["stats"]["facts"] == 1
+    assert client.post("/api/memory/import", content=b"not json").status_code == 400
+    assert client.post("/api/memory/import", content=b"{}", headers={"origin": "http://evil.example"}).status_code == 403
