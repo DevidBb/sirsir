@@ -34,7 +34,7 @@ sample_rate = 16000
 input_device = ""
 block_ms = 30
 # Определение конца речи (энергетический VAD с адаптивным порогом шума).
-silence_ms_to_stop = 900
+silence_ms_to_stop = 700
 max_command_seconds = 15
 no_speech_timeout_seconds = 6
 vad_energy_ratio = 3.0
