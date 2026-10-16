@@ -64,10 +64,25 @@ ORDINALS = {
 }
 
 # Сочинение текста по просьбе («напиши письмо начальнику, что я заболел»).
-COMPOSE_PROMPT = ("Ты пишешь текст от имени пользователя по его просьбе. Выведи только сам "
-                  "готовый текст: без пояснений, вступлений, заголовков, кавычек, markdown и "
-                  "эмодзи. Пиши по-русски, естественно и вежливо. Если длина не указана — "
-                  "до 80 слов.")
+COMPOSE_PROMPT = ("Ты пишешь готовый текст от имени пользователя. Выведи только результат, "
+                  "без вступления и пояснений. Пиши естественно на языке, который подходит запросу. "
+                  "Для обычных писем и сообщений используй вежливый, живой стиль и до 80 слов, "
+                  "если длина не указана.")
+PROMPT_REQUEST_RE = re.compile(r"\b(?:промпт|prompt|инструкци\w* для (?:chatgpt|чатгпт|claude|ии|нейросет\w*)|"
+                               r"запрос для (?:chatgpt|чатгпт|claude|ии|нейросет\w*))\b", re.I)
+
+
+def compose_system_prompt(request: str) -> str:
+    """Для промптов ИИ разрешаем подробную структуру и не навязываем лимит в 80 слов."""
+    if PROMPT_REQUEST_RE.search(request):
+        return ("Ты — опытный prompt-инженер. Создай полный, конкретный и готовый к копированию "
+                "промпт по запросу пользователя. Сохрани все его требования и ограничения; добавь "
+                "полезные критерии качества, проверку результата и ясные инструкции, только если "
+                "они уместны. Не выдумывай детали, которые меняют цель. Используй заголовки, списки "
+                "и форматирование Markdown, когда это улучшает промпт. Не ограничивайся 80 словами. "
+                "Выведи только сам промпт, без вступления и пояснений. Язык промпта выбирай по "
+                "запросу пользователя и языку, предназначенному для итогового результата.")
+    return COMPOSE_PROMPT
 COMPOSE_MAX_TOKENS = 500
 PREVIEW_WORDS = 15
 # Быстрые команды ввода, которые выполняет сам помощник (не инструменты LLM).
@@ -337,6 +352,15 @@ class Assistant:
                 or not first.text.startswith(("Запускаю", "Открываю")):
             return first  # переспросили «какой из вариантов» или не открылось — дальше не идём
         second = m.group("b").strip()
+        # «Открой ChatGPT и напиши промпт…» — сначала составляем текст моделью,
+        # затем предлагаем вставить его в активное окно после подтверждения.
+        second_intent = self.intents.match(second)
+        if second_intent is not None and second_intent.tool == "compose_text":
+            if self.dictation.wait_new_foreground(before) is None:
+                return Reply(first.text + " Не дождался окна программы, текст не вставлял.")
+            drafted = self._input_intent(second, second_intent)
+            return Reply(" ".join(x for x in (first.text, drafted.text) if x),
+                         expect_followup=drafted.expect_followup, data=drafted.data, ok=drafted.ok)
         typed = TYPE_AFTER_RE.match(second)
         if typed:
             # Печатаем только в новое окно: иначе текст ушёл бы туда, где был фокус раньше.
@@ -415,7 +439,7 @@ class Assistant:
 
     def _compose(self, request: str) -> Reply:
         """LLM сочиняет текст; печатаем в активное окно только после «подтверждаю»."""
-        messages = [{"role": "system", "content": COMPOSE_PROMPT},
+        messages = [{"role": "system", "content": compose_system_prompt(request)},
                     {"role": "user", "content": request}]
         try:
             message = self.llm.chat(messages, options={"num_predict": COMPOSE_MAX_TOKENS})

@@ -248,3 +248,21 @@ def test_compose_llm_down(config):
 def test_prepare_text_without_voice_punctuation():
     assert prepare_text("С точки зрения запятая всё", voice_punctuation=False) == \
         "С точки зрения запятая всё "
+
+
+def test_prompt_requests_are_composed_as_prompts(config):
+    from jarvis.assistant import compose_system_prompt
+    from jarvis.intents import IntentMatcher
+
+    matcher = IntentMatcher({}, {})
+    phrases = [
+        "Напиши промпт для ChatGPT, чтобы он сделал сайт",
+        "Создай инструкцию для Claude Code",
+        "Сгенерируй prompt для ИИ",
+    ]
+    for phrase in phrases:
+        intent = matcher.match(phrase)
+        assert intent is not None and intent.tool == "compose_text"
+        assert "Не ограничивайся 80 словами" in compose_system_prompt(phrase)
+
+    assert "до 80 слов" in compose_system_prompt("Напиши письмо начальнику")
