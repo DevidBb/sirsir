@@ -101,3 +101,15 @@ def test_ambiguous_phrases_go_to_llm(m, phrase):
 def test_note_with_polite_word(m):
     # «пожалуйста» перед словом «заметку» не попадает в текст заметки.
     assert m.match("запиши, пожалуйста, заметку купить хлеб") == Intent("add_note", {"text": "купить хлеб"})
+
+
+def test_chatgpt_and_twitter_voice_aliases_from_config(config):
+    matcher = IntentMatcher(
+        config.get("windows.apps", {}),
+        config.get("windows.websites", {}),
+        config.get("windows.folders", {}),
+    )
+    assert matcher.match("Открой ChatGPT") == Intent("open_website", {"name": "chatgpt"})
+    assert matcher.match("открой чатгпт") == Intent("open_website", {"name": "чатгпт"})
+    assert matcher.match("открой Twitter") == Intent("open_website", {"name": "twitter"})
+    assert matcher.match("открой твиттер") == Intent("open_website", {"name": "твиттер"})
