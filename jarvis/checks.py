@@ -68,7 +68,8 @@ def check_packages(voice: bool, config: Config | None = None) -> list[CheckResul
 
 def check_ollama(config: Config) -> list[CheckResult]:
     # Ollama обязательна, только если выбрана как провайдер модели.
-    required = str(config.get("llm.provider", "ollama")) == "ollama"
+    # Гибрид использует Ollama для быстрых обычных вопросов и fallback.
+    required = str(config.get("llm.provider", "ollama")).lower() in ("ollama", "hybrid")
     client = OllamaClient(config.get("llm.base_url"), config.get("llm.model"))
     try:
         models = client.list_models()
