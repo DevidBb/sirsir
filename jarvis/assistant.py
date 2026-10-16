@@ -471,7 +471,7 @@ class Assistant:
                 name = "compose-text"
                 description = "Создание текста без действий в приложениях."
                 def prompt(self) -> str:
-                    return system_prompt + "\\nИнструменты отключены. Выведи только готовый текст."
+                    return system_prompt + "\nИнструменты отключены. Выведи только готовый текст."
                 def allows(self, tool_name: str) -> bool:
                     return False
 
