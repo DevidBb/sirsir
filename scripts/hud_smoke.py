@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -28,6 +29,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 FAILS: list[str] = []
+LOG_RECORD = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d")
 
 
 def check(ok: bool, what: str, detail: str = "") -> bool:
@@ -188,12 +190,13 @@ def finish(proc: subprocess.Popen, work: Path, log_out, keep: bool) -> int:
     expected = ("Голос не запущен", "LLM:", "Ollama")
     unexpected = []
     for source in (server_log, text):
-        lines = source.splitlines()
-        for i, line in enumerate(lines):
-            if line.startswith("Traceback"):
-                context = " ".join(lines[max(0, i - 2):i])
-                if not any(e in context for e in expected):
-                    unexpected.append(context[-200:] or line)
+        # Трассировка (и вся цепочка «During handling…») относится к последней записи журнала с меткой времени.
+        record = ""
+        for line in source.splitlines():
+            if LOG_RECORD.match(line):
+                record = line
+            elif line.startswith("Traceback") and not any(e in record for e in expected):
+                unexpected.append(record[-200:] or line)
     check(not unexpected, "в журнале нет неожиданных ошибок", "; ".join(unexpected)[:600])
     shutil.copy(work / "server.log", ROOT / "data" / "hud-smoke-server.log") if (ROOT / "data").exists() else None
     if jarvis_log.exists() and (ROOT / "data").exists():
