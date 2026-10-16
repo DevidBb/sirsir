@@ -261,6 +261,9 @@
     if (!v) return;
     serverVoice = v;
     $("listenBtn").hidden = !v.enabled;
+    // Локальный голос сам озвучивает ответы — озвучка браузера дала бы второй голос.
+    $("ttsToggle").closest("label").hidden = !!v.enabled;
+    if (v.enabled) stopSpeech();
     if (v.enabled) {
       $("micBtn").disabled = false;
       $("micBtn").setAttribute("aria-pressed", v.muted ? "false" : "true");
@@ -307,7 +310,7 @@
   $("ttsToggle").onchange = () => { try { localStorage.setItem("jarvis.tts", $("ttsToggle").checked ? "1" : "0"); } catch (e) { /* */ } if (!$("ttsToggle").checked) stopSpeech(); };
   function plain(text) { return String(text).replace(/https?:\/\/\S+/g, "").replace(/[#*`|>_]/g, " ").replace(/\s+/g, " ").trim(); }
   function speak(text) {
-    if (!$("ttsToggle").checked || !window.speechSynthesis || !text) return;
+    if (serverVoice.enabled || !$("ttsToggle").checked || !window.speechSynthesis || !text) return;
     const u = new SpeechSynthesisUtterance(plain(text).slice(0, 1200));
     u.lang = /[а-яё]/i.test(text) ? "ru-RU" : "en-US";
     u.onstart = () => { speaking = true; setState("speaking"); };

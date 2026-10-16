@@ -315,13 +315,20 @@ class BrowserController:
         return self._run(go)
 
     def open_from_other_thread(self, url: str) -> bool:
-        """Совместимо с webbrowser.open для быстрых команд «открой ютуб»."""
+        """Совместимо с webbrowser.open для быстрых команд «открой ютуб».
+
+        Страница долго грузится — она уже открыта, это не ошибка. Браузер Джарвиса не запустился —
+        открываем в браузере Windows по умолчанию, чтобы команда всё равно сработала.
+        """
         try:
             self.open(url)
             return True
         except BrowserError as e:
-            log.warning("%s", e)
-            return False
+            if "не ответила вовремя" in str(e):
+                return True
+            log.warning("%s — открываю в браузере по умолчанию", e)
+            import webbrowser
+            return webbrowser.open(url)
 
     def _info(self, with_elements: bool = True, max_text: int = MAX_TEXT) -> PageInfo:
         page = self.page
