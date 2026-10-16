@@ -139,7 +139,11 @@ class App:
             raise ValueError(f"Неизвестный провайдер: {provider}")
         self.config.set("llm.provider", provider)
         self.memory.set_setting("llm.provider", provider)
+        if self.assistant.agent_backend is not None:
+            self.assistant.agent_backend.close()
         self.assistant.agent_backend = make_agent_backend(self.config)
+        if self.assistant.agent_backend is not None:
+            self.assistant.agent_backend.warm_up(self.assistant)
         return provider
 
     # --- настройки ---
@@ -202,6 +206,8 @@ class App:
     def _preload_llm(self) -> None:
         if self.config.get("llm.preload", True):
             threading.Thread(target=self.llm.preload, daemon=True, name="llm-preload").start()
+            if self.assistant.agent_backend is not None:  # Claude: запустить Claude Code заранее
+                self.assistant.agent_backend.warm_up(self.assistant)
 
     # --- напоминания ---
     def _on_reminder(self, text: str) -> None:
@@ -539,6 +545,8 @@ class App:
         threading.Thread(target=loop, daemon=True, name="console").start()
 
     def close(self) -> None:
+        if self.assistant.agent_backend is not None:
+            self.assistant.agent_backend.close()
         self.reminders.stop()
         self.schedules.stop()
         if self.mcp is not None:

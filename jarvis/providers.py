@@ -15,9 +15,11 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
 import platform
 import shutil
+import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
@@ -91,7 +93,12 @@ def os_name() -> str:
 
 
 class ClaudeAgentBackend:
-    """Один ход диалога = одна сессия ClaudeSDKClient; контекст между ходами — ``resume``."""
+    """Постоянная сессия ClaudeSDKClient: процесс Claude Code живёт между ходами (без ~3–5 с на запуск).
+
+    Все операции с клиентом идут в одной задаче asyncio («владелец») в своём потоке — так требует SDK.
+    Клиент пересоздаётся (с ``resume``), когда меняются инструменты, системный промпт или сессия
+    (навык, плановая задача, «новый диалог»), а также после ошибки, тайм-аута или прерывания.
+    """
 
     def __init__(self, model: str = "", max_turns: int = 16, timeout: float = 240,
                  work_dir: str | Path = "data/agent", client_factory: Callable[..., Any] | None = None,
@@ -105,6 +112,13 @@ class ClaudeAgentBackend:
         self.session_id: str | None = None
         self._client_factory = client_factory
         self.last_error = ""
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._jobs: asyncio.Queue | None = None
+        self._start_lock = threading.Lock()
+        self._client: Any = None
+        self._client_key: tuple | None = None
+        self._client_session: str | None = None
+        self._state: dict[str, Any] = {}
 
     # --- диагностика ---
     @staticmethod
@@ -119,7 +133,74 @@ class ClaudeAgentBackend:
         return True, "Claude Agent SDK установлен; нужна авторизация (claude login или ANTHROPIC_API_KEY)"
 
     def reset(self) -> None:
-        self.session_id = None
+        self.session_id = None  # клиент переподключится к новой сессии на следующем ходу
+
+    # --- постоянный клиент ---
+    def _ensure_owner(self) -> asyncio.AbstractEventLoop:
+        with self._start_lock:
+            if self._loop is None:
+                ready = threading.Event()
+
+                def main() -> None:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    self._jobs = asyncio.Queue()
+                    self._loop = loop
+                    ready.set()
+                    loop.run_until_complete(self._owner())
+                    loop.close()
+                threading.Thread(target=main, daemon=True, name="claude-agent").start()
+                ready.wait(10)
+            return self._loop
+
+    async def _owner(self) -> None:
+        """Единственная задача, которая подключает, использует и закрывает клиента."""
+        assert self._jobs is not None
+        while True:
+            job = await self._jobs.get()
+            if job is None:
+                await self._drop_client()
+                return
+            fn, fut = job
+            try:
+                result = await fn()
+            except BaseException as e:  # noqa: BLE001 — передаём вызывающему потоку
+                await self._drop_client()  # после сбоя состояние клиента неизвестно
+                if not fut.done():
+                    fut.set_exception(e)
+            else:
+                if not fut.done():
+                    fut.set_result(result)
+
+    def _submit(self, fn: Callable[[], Any], timeout: float) -> Any:
+        loop = self._ensure_owner()
+        fut: concurrent.futures.Future = concurrent.futures.Future()
+        loop.call_soon_threadsafe(self._jobs.put_nowait, (fn, fut))
+        return fut.result(timeout)
+
+    async def _drop_client(self) -> None:
+        client, self._client, self._client_key = self._client, None, None
+        if client is not None:
+            try:
+                await client.__aexit__(None, None, None)
+            except Exception:  # noqa: BLE001 — процесс мог уже завершиться
+                log.debug("Claude: закрытие клиента", exc_info=True)
+
+    def warm_up(self, assistant: "Assistant") -> None:
+        """Заранее запустить Claude Code, чтобы первый ответ пришёл быстрее (в фоне, без запроса к модели)."""
+        def run() -> None:
+            try:
+                self._submit(lambda: self._ensure_client(assistant), 60)
+            except Exception as e:  # noqa: BLE001 — не мешает работе: подключимся на первом ходу
+                log.info("Claude: предварительный запуск не удался: %s", e)
+        threading.Thread(target=run, daemon=True, name="claude-warm-up").start()
+
+    def close(self) -> None:
+        if self._loop is not None and not self._loop.is_closed():
+            try:
+                self._loop.call_soon_threadsafe(self._jobs.put_nowait, None)
+            except RuntimeError:
+                pass
 
     # --- ход диалога ---
     def run(self, assistant: "Assistant", text: str,
@@ -130,9 +211,9 @@ class ClaudeAgentBackend:
         assistant.emergency.reset()
         state: dict[str, Any] = {"data": None, "confirm": None}
         try:
-            answer = asyncio.run(asyncio.wait_for(
-                self._turn(assistant, text, on_sentence, state, image), self.timeout))
-        except asyncio.TimeoutError:
+            answer = self._submit(lambda: self._timed_turn(assistant, text, on_sentence, state, image),
+                                  self.timeout + 30)
+        except (asyncio.TimeoutError, concurrent.futures.TimeoutError, TimeoutError):
             self.last_error = "превышено время ответа"
             return Reply(f"Задача не уложилась в {int(self.timeout)} с и остановлена.")
         except Exception as e:  # noqa: BLE001 — честная ошибка вместо падения
@@ -161,7 +242,7 @@ class ClaudeAgentBackend:
         lines = [f"{m['role']}: {str(m['content'])[:1500]}" for m in recent]
         return "Недавний контекст (для справки):\n" + "\n".join(lines) + "\n\nЗапрос пользователя: "
 
-    def _build_tools(self, assistant: "Assistant", state: dict[str, Any]):
+    def _build_tools(self, assistant: "Assistant"):
         from claude_agent_sdk import create_sdk_mcp_server, tool
         from .assistant import Reply
         sdk_tools = []
@@ -171,6 +252,7 @@ class ClaudeAgentBackend:
 
             def make(name: str):
                 async def handler(args: dict[str, Any]) -> dict[str, Any]:
+                    state = self._state  # состояние текущего хода (клиент живёт дольше хода)
                     outcome = await asyncio.to_thread(assistant._run_tool, name, args)
                     state.setdefault("tools", []).append(name)
                     if isinstance(outcome, Reply):  # нужно подтверждение
@@ -210,7 +292,20 @@ class ClaudeAgentBackend:
                 maxTurns=max(4, self.max_turns // 2), background=False)
         return agents
 
-    def _options(self, assistant: "Assistant", server, allowed: list[str], query: str = ""):
+    def _system_prompt(self, assistant: "Assistant", agents: dict[str, Any]) -> str:
+        # Только не зависящая от запроса память (предпочтения, факты), чтобы промпт не менялся
+        # от хода к ходу; найденное по запросу добавляется к самому запросу (_memory_note).
+        return (AGENT_PROMPT.format(name=assistant.name, os=os_name(), facts=assistant.memory.context_for(""))
+                + assistant.skill_prompt() + (DELEGATE_NOTE.format(roles=", ".join(agents)) if agents else ""))
+
+    @staticmethod
+    def _memory_note(assistant: "Assistant", query: str) -> str:
+        stable = set(assistant.memory.context_for("").splitlines())
+        extra = [line for line in assistant.memory.context_for(query).splitlines()
+                 if line.startswith("- ") and line not in stable]
+        return ("Из памяти по этому запросу (для справки):\n" + "\n".join(extra) + "\n\n") if extra else ""
+
+    def _options(self, assistant: "Assistant", server, allowed: list[str]):
         import warnings
 
         from claude_agent_sdk import CanUseToolShadowedWarning, ClaudeAgentOptions, PermissionResultDeny
@@ -228,73 +323,94 @@ class ClaudeAgentBackend:
                 return PermissionResultAllow()
             return PermissionResultDeny(message=f"Инструмент {tool_name} Джарвису недоступен.")
 
-        block = assistant.memory.context_for(query)
         self.work_dir.mkdir(parents=True, exist_ok=True)
         return ClaudeAgentOptions(
             tools=["Agent"] if agents else [], agents=agents or None, allowed_tools=allowed,
             mcp_servers={"jarvis": server}, strict_mcp_config=True,
-            setting_sources=[], system_prompt=AGENT_PROMPT.format(name=assistant.name, os=os_name(),
-                                                                  facts=block) + assistant.skill_prompt()
-            + (DELEGATE_NOTE.format(roles=", ".join(agents)) if agents else ""),
+            setting_sources=[], system_prompt=self._system_prompt(assistant, agents),
             model=self.model or None, max_turns=self.max_turns, resume=self.session_id,
             cwd=str(self.work_dir), include_partial_messages=True, can_use_tool=deny_other,
             # Агенты — синхронно: иначе Claude Code запускает их в фоне и ход заканчивается без их отчётов.
             env={"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"})
 
+    def _key(self, assistant: "Assistant") -> tuple:
+        """Всё, что задаётся при подключении: изменилось — нужен новый клиент."""
+        agents = self._agents(assistant)
+        return (tuple(t.name for t in assistant.turn_tools()), tuple(agents),
+                self._system_prompt(assistant, agents), self.model, self.max_turns, self._client_factory)
+
+    async def _ensure_client(self, assistant: "Assistant") -> Any:
+        key = self._key(assistant)
+        if self._client is not None and key == self._client_key and self.session_id == self._client_session:
+            return self._client
+        await self._drop_client()
+        from claude_agent_sdk import ClaudeSDKClient
+        server, allowed = self._build_tools(assistant)
+        factory = self._client_factory or ClaudeSDKClient
+        client = factory(options=self._options(assistant, server, allowed))
+        await client.__aenter__()
+        self._client, self._client_key, self._client_session = client, key, self.session_id
+        return client
+
+    async def _timed_turn(self, *args) -> str:
+        async with asyncio.timeout(self.timeout):
+            return await self._turn(*args)
+
     async def _turn(self, assistant: "Assistant", text: str,
                     on_sentence: Callable[[str], bool] | None, state: dict[str, Any],
                     image: tuple[str, str] | None = None) -> str:
-        from claude_agent_sdk import (AssistantMessage, ClaudeSDKClient, ResultMessage, StreamEvent,
-                                      TextBlock, ToolUseBlock)
-        server, allowed = self._build_tools(assistant, state)
-        options = self._options(assistant, server, allowed, text)
-        factory = self._client_factory or ClaudeSDKClient
+        from claude_agent_sdk import AssistantMessage, ResultMessage, StreamEvent, TextBlock, ToolUseBlock
+        self._state = state
+        client = await self._ensure_client(assistant)
         stream = SentenceStream(lambda s: on_sentence(s) is not False) if on_sentence else None
         parts: list[str] = []
         result_text = None
-        async with factory(options=options) as client:
-            async def watch_stop() -> None:
-                while True:
-                    await asyncio.sleep(0.2)
-                    if assistant.emergency.active:
-                        await client.interrupt()
-                        return
-            watcher = asyncio.create_task(watch_stop())
-            try:
-                prompt = self._context(assistant) + text
-                if image is None:
-                    await client.query(prompt)
-                else:
-                    await client.query(_with_image(prompt, image))
-                async for msg in client.receive_response():
-                    if getattr(msg, "parent_tool_use_id", None):
-                        continue  # текст агентов — не ответ пользователю; их инструменты видны в ходе задачи
-                    if isinstance(msg, StreamEvent):
-                        ev = msg.event or {}
-                        delta = ev.get("delta") or {}
-                        if ev.get("type") == "content_block_delta" and delta.get("type") == "text_delta":
-                            assistant.emit({"type": "delta", "text": delta.get("text", "")})
-                            if stream is not None:
-                                stream.feed(delta.get("text", ""))
-                    elif isinstance(msg, AssistantMessage):
-                        for block in msg.content:
-                            if isinstance(block, TextBlock) and block.text.strip():
-                                parts.append(block.text)
-                                assistant.emit({"type": "delta_end"})
-                            elif isinstance(block, ToolUseBlock) and block.name in SUBAGENT_TOOLS:
-                                inp = block.input or {}
-                                log.info("Поручение агенту %s: %s", inp.get("subagent_type"),
-                                         {k: v for k, v in inp.items() if k != "prompt"})
-                                state.setdefault("agents", []).append(inp.get("subagent_type", ""))
-                                assistant.emit({"type": "delegate", "agent": inp.get("subagent_type", ""),
-                                                "text": str(inp.get("description", ""))[:200]})
-                    elif isinstance(msg, ResultMessage):
-                        self.session_id = msg.session_id or self.session_id
-                        if msg.is_error and not assistant.emergency.active:
-                            raise RuntimeError(msg.result or msg.subtype or "ошибка модели")
-                        result_text = msg.result
-            finally:
-                watcher.cancel()
+
+        async def watch_stop() -> None:
+            while True:
+                await asyncio.sleep(0.2)
+                if assistant.emergency.active:
+                    await client.interrupt()
+                    return
+        watcher = asyncio.create_task(watch_stop())
+        try:
+            prompt = self._memory_note(assistant, text) + self._context(assistant) + text
+            if image is None:
+                await client.query(prompt)
+            else:
+                await client.query(_with_image(prompt, image))
+            async for msg in client.receive_response():
+                if getattr(msg, "parent_tool_use_id", None):
+                    continue  # текст агентов — не ответ пользователю; их инструменты видны в ходе задачи
+                if isinstance(msg, StreamEvent):
+                    ev = msg.event or {}
+                    delta = ev.get("delta") or {}
+                    if ev.get("type") == "content_block_delta" and delta.get("type") == "text_delta":
+                        assistant.emit({"type": "delta", "text": delta.get("text", "")})
+                        if stream is not None:
+                            stream.feed(delta.get("text", ""))
+                elif isinstance(msg, AssistantMessage):
+                    for block in msg.content:
+                        if isinstance(block, TextBlock) and block.text.strip():
+                            parts.append(block.text)
+                            assistant.emit({"type": "delta_end"})
+                        elif isinstance(block, ToolUseBlock) and block.name in SUBAGENT_TOOLS:
+                            inp = block.input or {}
+                            log.info("Поручение агенту %s: %s", inp.get("subagent_type"),
+                                     {k: v for k, v in inp.items() if k != "prompt"})
+                            state.setdefault("agents", []).append(inp.get("subagent_type", ""))
+                            assistant.emit({"type": "delegate", "agent": inp.get("subagent_type", ""),
+                                            "text": str(inp.get("description", ""))[:200]})
+                elif isinstance(msg, ResultMessage):
+                    self.session_id = msg.session_id or self.session_id
+                    self._client_session = self.session_id
+                    if msg.is_error and not assistant.emergency.active:
+                        raise RuntimeError(msg.result or msg.subtype or "ошибка модели")
+                    result_text = msg.result
+        finally:
+            watcher.cancel()
+        if assistant.emergency.active:  # после прерывания начнём с чистого клиента
+            await self._drop_client()
         if stream is not None:
             stream.flush()
             state["spoken"] = bool(stream.spoken)

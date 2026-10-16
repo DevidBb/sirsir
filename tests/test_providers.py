@@ -25,6 +25,8 @@ class FakeClient:
 
     script = []
     seen_options = []
+    prompts = []
+    closed = 0
     hang = False
 
     def __init__(self, options):
@@ -36,10 +38,12 @@ class FakeClient:
         return self
 
     async def __aexit__(self, *a):
+        FakeClient.closed += 1
         return False
 
     async def query(self, prompt):
         self.prompt = prompt
+        FakeClient.prompts.append(prompt)
 
     async def interrupt(self):
         self.interrupted = True
@@ -65,6 +69,7 @@ def env(config, monkeypatch):
     monkeypatch.setattr(claude_agent_sdk, "create_sdk_mcp_server",
                         lambda name, tools=None, version="1": {"tools": {t.name: t for t in tools}})
     FakeClient.script, FakeClient.seen_options, FakeClient.hang = [], [], False
+    FakeClient.prompts, FakeClient.closed = [], 0
     registry = ToolRegistry()
     calls = []
     registry.register(Tool("lookup", "Найти", lambda q: (calls.append(q), ToolResult(
@@ -76,7 +81,8 @@ def env(config, monkeypatch):
     assistant.on_event = events.append
     backend = ClaudeAgentBackend(client_factory=FakeClient, work_dir=config.root / "data" / "test-agent")
     assistant.agent_backend = backend
-    return assistant, backend, calls, events
+    yield assistant, backend, calls, events
+    backend.close()
 
 
 def test_agent_uses_registry_tools_with_isolation(env):
@@ -220,3 +226,50 @@ def test_delegation_can_be_disabled(env):
     FakeClient.script = [result("ок")]
     assistant.handle("сравни подробно два варианта и дай вывод")
     assert FakeClient.seen_options[0].tools == [] and not FakeClient.seen_options[0].agents
+
+
+def test_client_is_reused_between_turns(env):
+    assistant, backend, _, _ = env
+    FakeClient.script = [result("раз")]
+    assistant.handle("расскажи подробно про первую вещь")
+    FakeClient.script = [result("два")]
+    reply = assistant.handle("а теперь подробно про вторую вещь")
+    assert reply.text == "два"
+    assert len(FakeClient.seen_options) == 1 and FakeClient.closed == 0  # Claude Code не перезапускался
+    assert len(FakeClient.prompts) == 2
+
+
+def test_client_reconnects_on_new_session_and_after_error(env):
+    assistant, backend, _, _ = env
+    FakeClient.script = [result("раз")]
+    assistant.handle("расскажи подробно про первую вещь")
+    backend.reset()  # «новый диалог»
+    assistant.handle("расскажи подробно про вторую вещь")
+    assert len(FakeClient.seen_options) == 2 and FakeClient.seen_options[1].resume is None
+    FakeClient.script = [result("Invalid API key", is_error=True, subtype="error")]
+    assert "Claude недоступна" in assistant.handle("сделай что то сложное пожалуйста").text
+    FakeClient.script = [result("снова работает")]
+    assert assistant.handle("сделай что то сложное ещё раз").text == "снова работает"
+    assert len(FakeClient.seen_options) == 3 and FakeClient.seen_options[2].resume == "sess-1"
+
+
+def test_query_memory_goes_to_prompt_not_system_prompt(env):
+    assistant, backend, _, _ = env
+    assistant.memory.modify("INSERT INTO notes(text, created_at) VALUES(?, ?)", ("рецепт борща: свёкла, капуста", 1.0))
+    FakeClient.script = [result("ок")]
+    assistant.handle("расскажи подробно как варить борщ по рецепту")
+    assert "свёкла" in FakeClient.prompts[0] and "свёкла" not in FakeClient.seen_options[0].system_prompt
+
+
+def test_warm_up_connects_without_query(env):
+    assistant, backend, _, _ = env
+    backend.warm_up(assistant)
+    import time
+    for _ in range(100):
+        if FakeClient.seen_options:
+            break
+        time.sleep(0.02)
+    assert len(FakeClient.seen_options) == 1 and FakeClient.prompts == []
+    FakeClient.script = [result("быстро")]
+    assert assistant.handle("расскажи подробно что угодно").text == "быстро"
+    assert len(FakeClient.seen_options) == 1  # первый ход использовал заранее запущенный клиент
