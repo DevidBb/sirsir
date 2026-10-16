@@ -347,3 +347,22 @@ def test_hybrid_provider_creates_claude_backend_when_sdk_is_available(config, mo
     backend = make_agent_backend(config)
     assert isinstance(backend, ClaudeAgentBackend)
     backend.close()
+
+
+
+def test_hybrid_falls_back_to_local_model_when_claude_fails(config, caplog):
+    from jarvis.assistant import Reply
+
+    config.set("llm.provider", "hybrid")
+    a = build(config, [text("Локальный ответ о погоде.")])
+
+    class FailedClaude:
+        def run(self, assistant, request, on_sentence=None):
+            return Reply("Claude недоступен.", ok=False)
+
+    a.agent_backend = FailedClaude()
+    with caplog.at_level("WARNING"):
+        reply = a._ask_model("Какая погода завтра в Таллинне?")
+    assert reply.text == "Локальный ответ о погоде."
+    assert len(a.fake.requests) == 1
+    assert "локальную Ollama" in caplog.text
