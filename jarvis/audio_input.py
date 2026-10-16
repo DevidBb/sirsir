@@ -143,6 +143,9 @@ class Microphone:
         self._muted = threading.Event()
         self.error: str | None = None
         self.native_rate: int | None = None  # если устройство не умеет sample_rate
+        # Уровень сигнала последнего блока (0..1) — для индикатора в HUD.
+        self.level = 0.0
+        self._switch_lock = threading.Lock()
 
     @staticmethod
     def _parse_device(device):
@@ -156,6 +159,7 @@ class Microphone:
         if self._muted.is_set():
             return
         block = indata[:, 0].copy()
+        self.level = rms(block)
         if self.native_rate:
             block = resample(block, self.native_rate, self.sample_rate)
         try:
@@ -186,6 +190,24 @@ class Microphone:
                                           device=self.device, callback=self._callback)
         self._stream.start()
 
+    def switch(self, device: str | int | None) -> None:
+        """Сменить микрофон без перезапуска помощника (очередь блоков та же).
+
+        Если новое устройство не открылось — возвращаем прежнее и пробрасываем ошибку.
+        """
+        with self._switch_lock:
+            old_device, old_rate = self.device, self.native_rate
+            self.stop()
+            self.device, self.native_rate = self._parse_device(device), None
+            try:
+                self.start()
+            except Exception:
+                self.device, self.native_rate = old_device, old_rate
+                self.start()
+                raise
+            self.flush()
+            self.error = None
+
     @property
     def name(self) -> str:
         """Имя устройства, которое реально слушаем (для вывода при запуске)."""
@@ -196,10 +218,10 @@ class Microphone:
             return "по умолчанию" if self.device is None else str(self.device)
 
     def stop(self) -> None:
-        if self._stream is not None:
-            self._stream.stop()
-            self._stream.close()
-            self._stream = None
+        stream, self._stream = self._stream, None
+        if stream is not None:
+            stream.stop()
+            stream.close()
 
     @property
     def muted(self) -> bool:
@@ -227,6 +249,8 @@ class Microphone:
             try:
                 yield self._queue.get(timeout=timeout)
             except queue.Empty:
+                if self._switch_lock.locked():
+                    continue  # идёт смена микрофона
                 if self._stream is not None and not self._stream.active:
                     self.error = "Микрофон отключён или недоступен"
                     return

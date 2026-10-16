@@ -175,6 +175,10 @@ a { color: var(--cyan); }
 .provider { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
 .provider.active { border-color: var(--cyan); background: var(--cyan-soft); }
 .provider .pnote { color: var(--muted); font-size: 12px; }
+.audio-box { display: flex; flex-direction: column; gap: 8px; }
+.audio-box select { flex: 1; min-width: 0; background: rgba(5, 8, 13, .6); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+.level { height: 10px; border-radius: 5px; border: 1px solid var(--line); overflow: hidden; background: rgba(5, 8, 13, .6); }
+.level-bar { height: 100%; width: 0; background: linear-gradient(90deg, var(--green), var(--amber) 70%, var(--red)); transition: width .15s; }
 .diag-list li { display: grid; grid-template-columns: 16px 1fr; gap: 8px; font-size: 13px; }
 .diag-list li .mk { font: 700 12px var(--mono); }
 .diag-list li.ok .mk { color: var(--green); } .diag-list li.bad .mk { color: var(--red); } .diag-list li.warn .mk { color: var(--amber); }

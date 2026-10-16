@@ -97,6 +97,21 @@
     <div class="panel" id="tab-diag">
       <div class="panel-head"><h3>Состояние</h3><button class="link-btn" id="diagRefresh">обновить</button></div>
       <ul class="diag-list" id="diag"></ul>
+      <h3>Звук</h3>
+      <div class="audio-box">
+        <label class="small muted" for="micSelect">Микрофон</label>
+        <div class="inline-form">
+          <select id="micSelect"></select>
+          <button class="btn" id="micSave" type="button">Выбрать</button>
+        </div>
+        <div class="level" aria-label="Уровень сигнала микрофона"><div class="level-bar" id="levelBar"></div></div>
+        <div class="small muted" id="levelText">Уровень появится, когда работает локальный голос.</div>
+        <div class="inline-form">
+          <button class="btn" id="micTest" type="button">Проверить микрофон</button>
+          <button class="btn" id="ttsTest" type="button">Проверить голос</button>
+        </div>
+        <div class="small" id="audioResult"></div>
+      </div>
     </div>
   </aside>
 </main>

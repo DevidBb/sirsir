@@ -331,6 +331,65 @@ def create_app(runtime: Runtime, port: int):
         hub.publish({"type": "notice", "text": f"Модель: {app_core.config.get('llm.provider')}"})
         return JSONResponse({"ok": True})
 
+    # --- звук: микрофоны, уровень, проверки ---
+    async def audio(request: Request):
+        if (resp := guard(request)) is not None:
+            return resp
+        from .audio_diag import list_microphones
+        info = await asyncio.to_thread(list_microphones, str(app_core.config.get("audio.input_device", "") or ""))
+        info["voice"] = app_core.voice_status()
+        info["speaker"] = app_core.speaker.describe() if app_core.voice_active else ""
+        return JSONResponse(info)
+
+    async def audio_level(request: Request):
+        if (resp := guard(request)) is not None:
+            return resp
+        mic = app_core.mic if app_core.voice_active else None
+        return JSONResponse({"active": mic is not None, "muted": bool(mic and mic.muted),
+                             "level": round(float(getattr(mic, "level", 0.0)), 4) if mic else 0.0})
+
+    async def audio_device(request: Request):
+        if (resp := guard(request)) is not None:
+            return resp
+        spec = str((await request.json()).get("spec", ""))[:300]
+        if app_core.voice_active and app_core.mic is not None:
+            try:
+                await asyncio.to_thread(app_core.mic.switch, spec or None)
+            except Exception as e:  # noqa: BLE001 — устройство занято, отключено
+                return JSONResponse({"ok": False, "error": f"не удалось открыть микрофон: {e}"})
+        app_core.config.set("audio.input_device", spec)
+        app_core.memory.set_setting("audio.input_device", spec)
+        name = app_core.mic.name if app_core.voice_active and app_core.mic else spec.split("|")[0]
+        hub.publish({"type": "voice", **app_core.voice_status()})
+        return JSONResponse({"ok": True, "name": name or "по умолчанию",
+                             "applied": app_core.voice_active})
+
+    async def audio_test(request: Request):
+        if (resp := guard(request)) is not None:
+            return resp
+        if app_core.voice_active:
+            return JSONResponse({"ok": False, "error": "Микрофон сейчас слушает Джарвис — смотрите "
+                                 "индикатор уровня и скажите что-нибудь."})
+        spec = str((await request.json()).get("spec", ""))[:300]
+        from .audio_diag import test_microphone
+        try:
+            result = await asyncio.to_thread(test_microphone, spec or None)
+        except Exception as e:  # noqa: BLE001
+            return JSONResponse({"ok": False, "error": str(e)})
+        return JSONResponse({"ok": True, **result})
+
+    async def audio_speak(request: Request):
+        if (resp := guard(request)) is not None:
+            return resp
+        if not app_core.voice_active:
+            return JSONResponse({"ok": False, "error": "Голос не запущен (run_web.bat или --web --voice)."})
+
+        def speak():
+            with app_core.handle_lock:
+                app_core._speak(app_core.mic, "Проверка голоса. Если вы меня слышите, всё в порядке.")
+        threading.Thread(target=speak, daemon=True, name="tts-test").start()
+        return JSONResponse({"ok": True, "speaker": app_core.speaker.describe()})
+
     async def screenshot(request: Request):
         if (resp := guard(request)) is not None:
             return resp
@@ -400,6 +459,11 @@ def create_app(runtime: Runtime, port: int):
         Route("/api/memory/{kind}/{item_id:int}", memory_item, methods=["DELETE", "PUT"]),
         Route("/api/settings", settings, methods=["POST"]),
         Route("/api/screenshots/{name}", screenshot),
+        Route("/api/audio", audio),
+        Route("/api/audio/level", audio_level),
+        Route("/api/audio/device", audio_device, methods=["POST"]),
+        Route("/api/audio/test", audio_test, methods=["POST"]),
+        Route("/api/audio/speak", audio_speak, methods=["POST"]),
         WebSocketRoute("/ws", ws_endpoint),
         Mount("/static", StaticFiles(directory=STATIC_DIR), name="static"),
     ]

@@ -303,6 +303,7 @@
     document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === "tab-" + t.dataset.tab));
     if (t.dataset.tab === "memory") loadMemory();
     if (t.dataset.tab === "settings" || t.dataset.tab === "diag") refreshStatus();
+    if (t.dataset.tab === "diag") { loadAudio(); if (!levelTimer) pollLevel(); }
   });
 
   // ---------- память ----------
@@ -400,7 +401,55 @@
       : `Локальный голос: ${v.error ? "ошибка — " + v.error : "не запущен (run_web.bat или --web --voice)"}`);
     row(true, false, `Микрофон браузера: ${Rec ? "распознавание браузера (облако Google)" : "недоступно в этом браузере"}; озвучивание: ${window.speechSynthesis ? "голоса системы" : "нет"}`);
   }
-  $("diagRefresh").onclick = refreshStatus;
+  $("diagRefresh").onclick = () => { refreshStatus(); loadAudio(); };
+
+  // ---------- звук ----------
+  let levelTimer = null;
+  async function loadAudio() {
+    let a;
+    try { a = await api("/api/audio"); } catch (e) { return; }
+    const sel = $("micSelect"); sel.innerHTML = "";
+    const def = document.createElement("option"); def.value = ""; def.textContent = "По умолчанию (Windows)";
+    sel.appendChild(def);
+    (a.devices || []).forEach(d => {
+      const o = document.createElement("option");
+      o.value = d.spec;
+      o.textContent = `${d.name} · ${d.api}${d.default ? " · по умолчанию" : ""}${d.virtual ? " · виртуальный, звука не будет" : ""}`;
+      if (d.spec === a.selected) o.selected = true;
+      sel.appendChild(o);
+    });
+    $("audioResult").textContent = a.error || (a.speaker ? `Голос: ${a.speaker}` : "");
+    $("micTest").disabled = !!(a.voice && a.voice.enabled);
+    $("ttsTest").disabled = !(a.voice && a.voice.enabled);
+  }
+  async function pollLevel() {
+    if (!$("tab-diag").classList.contains("active")) { levelTimer = null; return; }
+    try {
+      const l = await api("/api/audio/level");
+      const pct = Math.min(100, Math.round(l.level / 0.3 * 100));
+      $("levelBar").style.width = (l.active && !l.muted ? pct : 0) + "%";
+      $("levelText").textContent = !l.active ? "Уровень появится, когда работает локальный голос." :
+        l.muted ? "Микрофон выключен." : `Уровень: ${l.level.toFixed(3)} ${l.level < 0.01 ? "— тишина или микрофон не тот" : ""}`;
+    } catch (e) { /* сервер перезапускается */ }
+    levelTimer = setTimeout(pollLevel, 250);
+  }
+  $("micSave").onclick = async () => {
+    const r = await api("/api/audio/device", { method: "POST", body: JSON.stringify({ spec: $("micSelect").value }) });
+    $("audioResult").textContent = r.ok ? `Микрофон: ${r.name}${r.applied ? " — уже слушаю его." : " — будет использован при запуске голоса."}` : r.error;
+  };
+  $("micTest").onclick = async () => {
+    $("audioResult").textContent = "Запись 4 секунды: первую секунду помолчите, потом скажите «Джарвис, который час?»…";
+    $("micTest").disabled = true;
+    const r = await api("/api/audio/test", { method: "POST", body: JSON.stringify({ spec: $("micSelect").value }) });
+    $("micTest").disabled = false;
+    $("audioResult").textContent = r.ok
+      ? `Оценка: ${r.verdict}. Речь ${r.speech}, шум ${r.noise}, речь громче шума в ${r.snr} раза. ${(r.advice || []).join(" ")}`
+      : r.error;
+  };
+  $("ttsTest").onclick = async () => {
+    const r = await api("/api/audio/speak", { method: "POST", body: "{}" });
+    $("audioResult").textContent = r.ok ? `Говорю: ${r.speaker}` : r.error;
+  };
 
   setState("idle");
   connect();
