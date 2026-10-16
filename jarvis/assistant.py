@@ -103,9 +103,10 @@ COMPLEX_RE = re.compile(
     r"расскаж|перескаж|составь|напиши|оцени|проверь|открой|зайди|потом|затем|после этого|"
     r"погод|температур|градус|прогноз|новост|актуальн|текущ|последн|свеж|"
     r"курс валют|сколько стоит|цена|цены|завтра|сегодняшн|сейчас|"
-    r"compare|summar|analy|conclu|explain|read|review|then|after that|"
-    r"weather|forecast|news|latest|current|tomorrow|today|exchange rate|stock price|"
-    r"look up|research|sources)\w*", re.I)
+    r"продолжи|продолжай|подробнее|выполни|дальше|теперь сделай|сделай это|на основе этого|"
+    r"compare|summar|analy|conclu|explain|read|review|then|after that|continue|next step|do that|"
+    r"weather|forecast|temperature|degrees|news|latest|current|tomorrow|today|price|currency|"
+    r"exchange rate|stock price|look up|research|sources|based on that|execute|run it)\w*", re.I)
 
 
 def is_complex_request(query: str) -> bool:
