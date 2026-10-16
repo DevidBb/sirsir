@@ -268,7 +268,13 @@ class Assistant:
             # получает многошаговые задачи и запросы, где важна актуальная информация.
             # Быстрые команды уже обработаны раньше в _quick_intent и сюда не попадают.
             if provider != "hybrid" or is_complex_request(text):
-                return self.agent_backend.run(self, text, on_sentence)
+                reply = self.agent_backend.run(self, text, on_sentence)
+                if (provider == "hybrid" and not reply.ok and reply.action != STOP
+                        and not self.emergency.active):
+                    log.warning("Claude не выполнил задачу; переключаюсь на локальную Ollama.")
+                    self.emit({"type": "notice", "text": "Claude недоступен — пробую локальную модель Ollama."})
+                    return self._ask_llm(text, on_sentence)
+                return reply
         # Если Claude SDK не установлен в режиме hybrid, локальная модель остаётся рабочей.
         return self._ask_llm(text, on_sentence)
 
