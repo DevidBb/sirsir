@@ -10,6 +10,10 @@ on:
       - "requirements*.txt"
       - "scripts/download_models.py"
       - "scripts/check_components.py"
+      - "scripts/hud_smoke.py"
+      - "jarvis/**"
+      - "skills/**"
+      - "config.toml"
       - ".github/workflows/windows-install.yml"
 
 concurrency:
@@ -52,6 +56,9 @@ jobs:
           c=Config.load(); w=VoskWakeWord(c.path('wake_word.vosk_model_path'), c.get('wake_word.phrases')); w.load();
           a=SpeechRecognizer('small','cuda',models_dir=c.path('speech_recognition.models_dir')); print('ASR:', a.load());
           t=a.transcribe(np.zeros(32000,np.float32)); print('тишина:', repr(t)); assert t==''"
+      - name: HUD как у пользователя (run_web.bat) — сервер, страница, WebSocket, поиск, расписание
+        shell: cmd
+        run: .venv\Scripts\python.exe scripts\hud_smoke.py
       - name: Диагностический отчёт
         if: always()
         shell: cmd
@@ -60,4 +67,6 @@ jobs:
         if: always()
         with:
           name: report-install
-          path: data/report.txt
+          path: |
+            data/report.txt
+            data/hud-smoke-*.log
