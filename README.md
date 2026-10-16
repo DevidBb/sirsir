@@ -1,8 +1,8 @@
-# JARVIS — персональный ИИ-ассистент (Windows 10/11 и Kali Linux)
+# JARVIS — персональный ИИ-ассистент для Windows 10/11
 
 Два режима, одно ядро (`jarvis/assistant.py`, реестр инструментов, память, подтверждения):
 
-* **Интерфейс HUD в браузере** (`run_web.sh` / `run_web.bat`, Windows и Linux): чат с потоковым
+* **Интерфейс HUD в браузере** (`run_web.bat`): чат с потоковым
   выводом, ход задачи, результаты поиска, память, настройки, диагностика. Джарвис управляет
   **своим** браузером (Playwright, отдельный профиль): ищет в интернете и на YouTube, открывает
   результаты, читает страницы, нажимает кнопки, заполняет поля, переключает вкладки.
@@ -15,13 +15,7 @@
 
 ## Интерфейс HUD: быстрый старт
 
-**Kali Linux / Debian / Ubuntu** (без sudo, всё в папке проекта):
-```
-./install.sh            # .venv, зависимости, Chromium для Playwright (~170 МБ)
-./install.sh --claude   # необязательно: Claude Agent SDK (~250 МБ, облако Anthropic)
-./run_web.sh            # откроется http://127.0.0.1:8765
-```
-**Windows:** `install.bat` (ставит и Chromium), затем `run_web.bat` — HUD **вместе с локальным
+`install.bat` (ставит и Chromium, по желанию — Claude), затем `run_web.bat` — HUD **вместе с локальным
 голосом**: скажите «Джарвис» или нажмите «Слушать»; распознанная фраза, ход задачи и ответ видны в HUD,
 ответ звучит голосом Silero/Windows. Кнопка микрофона выключает и включает микрофон, «Прервать речь»
 обрывает ответ, «Стоп» — задачу. Звук обрабатывается только на компьютере. Без голоса:
@@ -325,7 +319,7 @@ python -m pyflakes jarvis scripts tests
 `tests/test_browser_real.py` запускает настоящий Chromium на локальной тестовой странице
 (пропускается, если Chromium для Playwright не скачан). `tests/test_web_app.py` проверяет сервер HUD
 (Origin/Host, WebSocket, отмена, память), `tests/test_providers.py` — Claude Agent SDK с подставным
-клиентом. CI: `.github/workflows/windows.yml` (Windows) и `linux.yml` (Ubuntu).
+клиентом. CI на настоящей Windows: `.github/workflows/windows.yml` и `windows-install.yml`.
 
 Проверки на настоящих моделях (Silero → Vosk/Whisper, Ollama), идут несколько минут:
 
