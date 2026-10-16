@@ -13,6 +13,7 @@ starlette>=0.40
 uvicorn>=0.30
 websockets>=12            # WebSocket для uvicorn
 mcp>=1.10                 # внешние MCP-серверы ([mcp.servers.*] в config.toml)
+PyYAML>=6                 # заголовки навыков skills/*/SKILL.md
 
 # Windows и система
 psutil>=5.9

@@ -135,7 +135,8 @@ class ClaudeAgentBackend:
         from claude_agent_sdk import create_sdk_mcp_server, tool
         from .assistant import Reply
         sdk_tools = []
-        for t in assistant.registry.tools():
+        tools = assistant.turn_tools()  # в навыке — только его инструменты
+        for t in tools:
             schema = t.schema()["function"]["parameters"]
 
             def make(name: str):
@@ -159,8 +160,7 @@ class ClaudeAgentBackend:
                     return {"content": content, "is_error": is_error}
                 return handler
             sdk_tools.append(tool(t.name, t.description, schema)(make(t.name)))
-        return create_sdk_mcp_server("jarvis", tools=sdk_tools), [f"mcp__jarvis__{t.name}"
-                                                                 for t in assistant.registry.tools()]
+        return create_sdk_mcp_server("jarvis", tools=sdk_tools), [f"mcp__jarvis__{t.name}" for t in tools]
 
     def _options(self, assistant: "Assistant", server, allowed: list[str], query: str = ""):
         import warnings
@@ -179,7 +179,7 @@ class ClaudeAgentBackend:
         return ClaudeAgentOptions(
             tools=[], allowed_tools=allowed, mcp_servers={"jarvis": server}, strict_mcp_config=True,
             setting_sources=[], system_prompt=AGENT_PROMPT.format(name=assistant.name, os=os_name(),
-                                                                  facts=block),
+                                                                  facts=block) + assistant.skill_prompt(),
             model=self.model or None, max_turns=self.max_turns, resume=self.session_id,
             cwd=str(self.work_dir), include_partial_messages=True, can_use_tool=deny_other)
 

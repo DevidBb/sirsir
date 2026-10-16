@@ -147,6 +147,9 @@ class Assistant:
         self.on_event: Callable[[dict], None] = lambda event: None
         # Внешний агент (Claude Agent SDK) вместо цикла Ollama, см. providers.py.
         self.agent_backend: Any = None
+        # Навыки (skills/*/SKILL.md) и навык, действующий в текущей задаче.
+        self.skills: Any = None
+        self.active_skill: Any = None
         # Снимки экрана («посмотри на экран»); screen_grabber подменяется в тестах.
         self.screen_dir = config.root / "data" / "screenshots"
         self.screen_grabber: Callable[[], Any] | None = None
@@ -174,6 +177,7 @@ class Assistant:
         text = (text or "").strip()
         if not normalize(text):
             return None
+        self.active_skill = None
 
         if self.emergency.matches(text):
             self.emergency_stop()
@@ -219,13 +223,36 @@ class Assistant:
         if composite is not None:
             return composite
 
+        if self.skills is not None:
+            found = self.skills.match(text)
+            if found is not None:  # «сравни источники …», «навык project-review …» — сразу модели
+                self.active_skill, text = found
+                log.info("Навык %s", self.active_skill.name)
+                self.emit({"type": "skill", "name": self.active_skill.name,
+                           "description": self.active_skill.description})
+                return self._ask_model(text, on_sentence)
+
         quick = self._quick_intent(text)
         if quick is not None:
             return quick
+        return self._ask_model(text, on_sentence)
 
+    def _ask_model(self, text: str, on_sentence: Callable[[str], bool] | None = None) -> Reply:
         if self.agent_backend is not None:
             return self.agent_backend.run(self, text, on_sentence)
         return self._ask_llm(text, on_sentence)
+
+    def turn_tools(self) -> list:
+        """Инструменты для модели в этой задаче: в навыке — только его, иначе все."""
+        skill = self.active_skill
+        if skill is None:
+            return self.registry.tools()
+        return [t for t in self.registry.tools() if t.name != "use_skill" and skill.allows(t.name)]
+
+    def skill_prompt(self) -> str:
+        if self.skills is None:
+            return ""
+        return self.active_skill.prompt() if self.active_skill is not None else self.skills.catalog()
 
     def emit(self, event: dict) -> None:
         try:
@@ -490,7 +517,7 @@ class Assistant:
         return None
 
     def _system_prompt(self, query: str = "") -> str:
-        return SYSTEM_PROMPT.format(name=self.name, facts=self.memory.context_for(query))
+        return SYSTEM_PROMPT.format(name=self.name, facts=self.memory.context_for(query)) + self.skill_prompt()
 
     def remember_task(self, request: str, answer: str, tools: list[str]) -> None:
         """Итог многошаговой задачи — в память (видно и удаляется во вкладке «Память»)."""
@@ -508,10 +535,13 @@ class Assistant:
                 # Аварийная остановка из другого потока обрывает речь и генерацию.
                 return not self.emergency.active and on_sentence(sentence) is not False
 
-            for _ in range(self.max_tool_calls + 1):
+            tools = self.turn_tools()
+            allowed = {t.name for t in tools}
+            steps = (self.active_skill.max_steps if self.active_skill is not None else None) or self.max_tool_calls
+            for _ in range(steps + 1):
                 stream = SentenceStream(guarded) if on_sentence else None
                 message = self.llm.chat(self.conversation.messages(self._system_prompt(text)),
-                                        tools=self.registry.schemas(),
+                                        tools=[t.schema() for t in tools],
                                         on_text=stream.feed if stream else None)
                 if self.emergency.active:
                     self.conversation.abort_turn()
@@ -539,7 +569,7 @@ class Assistant:
 
                 self.conversation.add({"role": "assistant", "content": message.get("content", ""),
                                        "tool_calls": calls})
-                for call in calls[: self.max_tool_calls]:
+                for call in calls[:steps]:
                     fn = call.get("function") or {}
                     name = str(fn.get("name", ""))
                     args = fn.get("arguments") or {}
@@ -554,7 +584,8 @@ class Assistant:
                         return Reply("Похоже, я зациклился. Остановлюсь.")
                     seen_calls.add(key)
 
-                    outcome = self._run_tool(name, args)
+                    outcome = (self._run_tool(name, args) if name in allowed or name not in self.registry.names()
+                               else f"Ошибка: инструмент {name} недоступен в навыке {self.active_skill.name}.")
                     used_tools.append(name)
                     if isinstance(outcome, Reply):  # нужно подтверждение
                         self.conversation.add({"role": "tool", "tool_name": name,

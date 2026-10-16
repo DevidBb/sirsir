@@ -231,6 +231,7 @@ class Runtime:
                                                                  "last_error": "Playwright не установлен"},
             "tools": app.registry.describe(),
             "mcp": app.mcp.describe() if getattr(app, "mcp", None) else [],
+            "skills": app.skills.describe(app.registry) if getattr(app, "skills", None) else [],
             "files": ({"roots": [str(r) for r in app.files.roots], "missing": app.files.missing}
                       if getattr(app, "files", None) else {"roots": [], "missing": []}),
             "checks": [{"name": r.name, "ok": r.ok, "detail": r.detail, "required": r.required}
@@ -339,6 +340,19 @@ def create_app(runtime: Runtime, port: int):
                 return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
         hub.publish({"type": "notice", "text": f"Модель: {app_core.config.get('llm.provider')}"})
         return JSONResponse({"ok": True})
+
+    async def skills_reload(request: Request):
+        """Перечитать skills/*/SKILL.md без перезапуска."""
+        if (resp := guard(request)) is not None:
+            return resp
+        library = getattr(app_core, "skills", None)
+        if library is None:
+            return JSONResponse({"ok": False, "error": "навыки выключены ([skills] enabled)"}, status_code=400)
+        def reload() -> None:
+            with app_core.handle_lock:  # не посреди задачи
+                library.reload()
+        await asyncio.to_thread(reload)
+        return JSONResponse({"ok": True, "skills": library.describe(app_core.registry)})
 
     # --- звук: микрофоны, уровень, проверки ---
     async def audio(request: Request):
@@ -467,6 +481,7 @@ def create_app(runtime: Runtime, port: int):
         Route("/api/memory/facts", add_fact, methods=["POST"]),
         Route("/api/memory/{kind}/{item_id:int}", memory_item, methods=["DELETE", "PUT"]),
         Route("/api/settings", settings, methods=["POST"]),
+        Route("/api/skills/reload", skills_reload, methods=["POST"]),
         Route("/api/screenshots/{name}", screenshot),
         Route("/api/audio", audio),
         Route("/api/audio/level", audio_level),

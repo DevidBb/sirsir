@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from . import calculator, checks, console_utf8, files, mcp_client
+from . import calculator, checks, console_utf8, files, mcp_client, skills
 from .assistant import EXIT, MUTE, STOP, Assistant, Reply
 from .config import Config, load_dotenv
 from .llm import OllamaClient
@@ -104,6 +104,9 @@ class App:
         self.assistant = Assistant(config, self.llm, self.registry, self.memory,
                                    on_setting_changed=self._on_setting_changed)
         self.assistant.agent_backend = make_agent_backend(config)
+        # Навыки: skills/<имя>/SKILL.md — инструкция и набор инструментов для повторяемых задач.
+        self.skills = skills.setup(config, self.registry)
+        self.assistant.skills = self.skills
 
     def _setup_browser(self) -> None:
         """Браузер Джарвиса (Playwright). Без Playwright помощник работает как раньше."""

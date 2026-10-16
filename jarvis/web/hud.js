@@ -63,6 +63,7 @@
       case "reply": finishReply(ev); break;
       case "cancelled": hideConfirm(); timelineAdd("fail", "Задача остановлена", ""); stopSpeech(); break;
       case "notice": addSystem(ev.text); if (ev.reminder) speak(ev.text); break;
+      case "skill": timelineAdd("task", "Навык: " + ev.name, ev.description || "", "", ev.ts); break;
     }
   }
 
@@ -416,6 +417,7 @@
       t.querySelector(".pnote").textContent = note + "." + extra;
       d.append(r, t); pv.appendChild(d);
     });
+    renderSkills(s.skills || []);
     const tl = $("tools"); tl.innerHTML = "";
     s.tools.forEach(t => {
       const li = document.createElement("li");
@@ -452,6 +454,28 @@
     row(true, false, `Микрофон браузера: ${Rec ? "распознавание браузера (облако Google)" : "недоступно в этом браузере"}; озвучивание: ${window.speechSynthesis ? "голоса системы" : "нет"}`);
   }
   $("diagRefresh").onclick = () => { refreshStatus(); loadAudio(); };
+
+  function renderSkills(list) {
+    const ul = $("skills"); ul.innerHTML = "";
+    if (!list.length) { const li = document.createElement("li"); li.className = "muted small"; li.textContent = "Навыков нет."; ul.appendChild(li); return; }
+    list.forEach(k => {
+      const li = document.createElement("li");
+      const c = document.createElement("code"); c.textContent = k.name;
+      const d = document.createElement("div"); d.className = "muted small";
+      if (k.error) { li.className = "bad"; d.textContent = "Не загружен: " + k.error; }
+      else {
+        d.textContent = k.description
+          + (k.triggers.length ? ` · фразы: «${k.triggers.join("», «")}»` : "")
+          + ` · инструменты: ${k.tools.length ? k.tools.join(", ") : "все"}`
+          + (k.missing_tools.length ? ` · нет сейчас: ${k.missing_tools.join(", ")}` : "");
+      }
+      li.append(c, d); ul.appendChild(li);
+    });
+  }
+  $("skillsReload").onclick = async () => {
+    try { const r = await api("/api/skills/reload", { method: "POST" }); renderSkills(r.skills || []); }
+    catch (e) { addSystem("Навыки: " + e.message); }
+  };
 
   // ---------- звук ----------
   let levelTimer = null;

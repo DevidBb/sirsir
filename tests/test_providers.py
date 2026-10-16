@@ -169,3 +169,18 @@ def test_user_image_is_sent_with_prompt(env):
     content = prompts[0][0]["message"]["content"]
     assert content[0]["type"] == "image" and content[0]["source"]["data"] == "QUJD"
     assert content[1]["text"].endswith("что на экране") and reply.text == "Вижу экран."
+
+
+def test_skill_restricts_claude_tools(env, tmp_path):
+    from jarvis.skills import SkillLibrary
+    assistant, _, calls, _ = env
+    (tmp_path / "sk" / "only-lookup").mkdir(parents=True)
+    (tmp_path / "sk" / "only-lookup" / "SKILL.md").write_text(
+        "---\nname: only-lookup\ndescription: Только поиск.\ntriggers: [поищи по навыку]\ntools: [lookup]\n---\n"
+        "Ищи аккуратно.\n", encoding="utf-8")
+    assistant.skills = SkillLibrary([tmp_path / "sk"])
+    FakeClient.script = [result("Нашёл.")]
+    assistant.handle("поищи по навыку что такое mcp")
+    opts = FakeClient.seen_options[0]
+    assert opts.allowed_tools == ["mcp__jarvis__lookup"]
+    assert "Ищи аккуратно." in opts.system_prompt
