@@ -101,7 +101,11 @@ TYPE_AFTER_RE = re.compile(r"^(?:напиши|напечатай|набери|в
 COMPLEX_RE = re.compile(
     r"\b(?:сравн|сопостав|проанализ|анализ|вывод|резюм|итог|объясн|прочита|прочти|изуч|выбер|"
     r"расскаж|перескаж|составь|напиши|оцени|проверь|открой|зайди|потом|затем|после этого|"
-    r"compare|summar|analy|conclu|explain|read|review|then|after that)\w*", re.I)
+    r"погод|температур|градус|прогноз|новост|актуальн|текущ|последн|свеж|"
+    r"курс валют|сколько стоит|цена|цены|завтра|сегодняшн|сейчас|"
+    r"compare|summar|analy|conclu|explain|read|review|then|after that|"
+    r"weather|forecast|news|latest|current|tomorrow|today|exchange rate|stock price|"
+    r"look up|research|sources)\w*", re.I)
 
 
 def is_complex_request(query: str) -> bool:
@@ -257,8 +261,14 @@ class Assistant:
         return self._ask_model(text, on_sentence)
 
     def _ask_model(self, text: str, on_sentence: Callable[[str], bool] | None = None) -> Reply:
+        provider = str(self.config.get("llm.provider", "ollama")).lower()
         if self.agent_backend is not None:
-            return self.agent_backend.run(self, text, on_sentence)
+            # Гибрид: локальная Qwen отвечает на обычные короткие вопросы; Claude
+            # получает многошаговые задачи и запросы, где важна актуальная информация.
+            # Быстрые команды уже обработаны раньше в _quick_intent и сюда не попадают.
+            if provider != "hybrid" or is_complex_request(text):
+                return self.agent_backend.run(self, text, on_sentence)
+        # Если Claude SDK не установлен в режиме hybrid, локальная модель остаётся рабочей.
         return self._ask_llm(text, on_sentence)
 
     def run_unattended(self, prompt: str) -> Reply:
