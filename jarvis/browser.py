@@ -355,7 +355,15 @@ class BrowserController:
     def click(self, ref: int) -> PageInfo:
         def do():
             before = self.page.url
-            self._locator(ref).click()
+            loc = self._locator(ref)
+            if (loc.get_attribute("target") or "").lower() == "_blank":
+                # Ссылка в новой вкладке: дожидаемся её, иначе следующий шаг увидит старую страницу.
+                with self.context.expect_page(timeout=self.timeout_ms) as new_page:
+                    loc.click()
+                self.page = new_page.value
+                self.page.bring_to_front()
+            else:
+                loc.click()
             self._wait_settled()
             info = self._info(with_elements=False)
             if info.url != before:
