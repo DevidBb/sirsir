@@ -27,7 +27,7 @@ from .llm import (SYSTEM_PROMPT, Conversation, LLMError, OllamaClient, SentenceS
 from .memory import Memory
 from .security import (CommandGuard, ConfirmationManager, EmergencyStop,
                        contains_phrase, normalize)
-from .tool_registry import Choice, ToolError, ToolRegistry
+from .tool_registry import Choice, ToolError, ToolRegistry, ToolResult
 
 log = logging.getLogger(__name__)
 # Журнал выполненных действий (пишется в data/actions.log, см. main.py).
@@ -601,10 +601,17 @@ class Assistant:
                 self._pending_choice = (result, self.clock())
             return result
 
+        if tool.precheck is not None:
+            problem = tool.precheck(clean)
+            if problem:
+                self.emit({"type": "tool_end", "name": name, "ok": False, "text": problem})
+                return ToolResult(problem, ok=False)
         reason = self.registry.needs_confirmation(tool, clean)
         if reason:
             audit.info("%s %s -> ожидает подтверждения", name, logged)
-            question = self.confirmations.request(reason, execute)
-            self.emit({"type": "confirm", "name": name, "text": question, "action": reason})
-            return Reply(question)
+            details = tool.confirm_details(clean) if tool.confirm_details else None
+            question = self.confirmations.request(reason, execute, tool.confirm_timeout)
+            self.emit({"type": "confirm", "name": name, "text": question, "action": reason,
+                       **({"details": details} if details else {})})
+            return Reply(question, data=details)
         return execute()

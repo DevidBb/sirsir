@@ -78,6 +78,7 @@ class PendingAction:
     description: str
     execute: Callable[[], Any]
     created_at: float = field(default_factory=time.monotonic)
+    timeout: float | None = None
 
 
 class ConfirmationManager:
@@ -99,13 +100,13 @@ class ConfirmationManager:
         self.clock = clock
         self.pending: PendingAction | None = None
 
-    def request(self, description: str, execute: Callable[[], Any]) -> str:
-        self.pending = PendingAction(description, execute, self.clock())
+    def request(self, description: str, execute: Callable[[], Any], timeout: float | None = None) -> str:
+        self.pending = PendingAction(description, execute, self.clock(), timeout)
         return (f"Требуется подтверждение: {description}. "
                 f"Скажите «{self.confirm_phrases[0]}» или «{self.cancel_phrases[0]}».")
 
     def has_pending(self) -> bool:
-        if self.pending and self.clock() - self.pending.created_at > self.timeout:
+        if self.pending and self.clock() - self.pending.created_at > (self.pending.timeout or self.timeout):
             self.pending = None
             return False
         return self.pending is not None
@@ -116,7 +117,7 @@ class ConfirmationManager:
             return self.EXPIRED, None
         action = self.pending
         self.pending = None
-        if self.clock() - action.created_at > self.timeout:
+        if self.clock() - action.created_at > (action.timeout or self.timeout):
             return self.EXPIRED, None
         # Подтверждение — только явная фраза; отрицание побеждает.
         if contains_phrase(text, self.cancel_phrases) and not is_exact_phrase(text, self.confirm_phrases):

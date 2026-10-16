@@ -113,6 +113,14 @@ a { color: var(--cyan); }
 /* --- подтверждение --- */
 .confirm { display: flex; align-items: center; gap: 12px; padding: 10px 14px; margin: 8px 0; border: 1px solid rgba(255, 181, 71, .55); border-radius: var(--radius); background: rgba(255, 181, 71, .08); }
 .confirm[hidden] { display: none; }
+.diff-box { margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; background: rgba(5, 8, 13, .6); }
+.diff-box summary { cursor: pointer; padding: 6px 10px; font-size: 13px; color: var(--muted); }
+.diff { margin: 0; padding: 8px 10px; max-height: 420px; overflow: auto; font: 12px/1.45 var(--mono); white-space: pre; }
+.diff .add { color: var(--green); background: rgba(80, 220, 140, .08); display: block; }
+.diff .del { color: var(--red); background: rgba(255, 93, 108, .08); display: block; }
+.diff .hunk { color: var(--cyan); display: block; }
+.diff .head { color: var(--muted); display: block; }
+.diff span { display: block; }
 .confirm-text { flex: 1; display: flex; gap: 10px; align-items: center; }
 .confirm-icon { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--amber); color: var(--amber); display: grid; place-items: center; font: 700 13px var(--mono); flex: none; }
 .confirm-actions { display: flex; gap: 8px; }

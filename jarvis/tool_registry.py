@@ -37,6 +37,12 @@ class Tool:
     # Подтверждение в зависимости от аргументов: вернуть текст «что сделать» или None.
     # Например, клик по кнопке «Купить» требует подтверждения, по ссылке — нет.
     confirm_check: Callable[[dict[str, Any]], str | None] | None = None
+    # Проверка до подтверждения: текст ошибки — действие не предлагается и не выполняется.
+    precheck: Callable[[dict[str, Any]], str | None] | None = None
+    # Подробности для экрана подтверждения (например, diff изменения файла).
+    confirm_details: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None
+    # Сколько секунд ждать подтверждения (None — как в [security]).
+    confirm_timeout: float | None = None
     # Аргументы, которые не пишутся в журнал (вводимый текст и т.п.).
     private_params: tuple[str, ...] = ()
     # Группа для интерфейса и диагностики: system, browser, web, memory...
@@ -188,7 +194,8 @@ class ToolRegistry:
         if not isinstance(value, _PY_TYPES[ptype]) or (ptype != "boolean" and isinstance(value, bool)):
             raise ToolError(f"Аргумент {pname} должен быть типа {ptype}")
         if isinstance(value, str):
-            value = value.strip()
+            if not p.multiline:  # текст файла передаётся как есть, вплоть до перевода строки в конце
+                value = value.strip()
             if len(value) > p.max_length:
                 raise ToolError(f"Аргумент {pname} слишком длинный")
             allowed = "\n\t" if p.multiline else ""

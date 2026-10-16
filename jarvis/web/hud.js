@@ -169,6 +169,22 @@
     } else if (data.kind === "page" || data.kind === "opened") {
       wrap.className = "meta small";
       wrap.appendChild(link(data.url, data.title || data.url));
+    } else if ((data.kind === "diff" || data.kind === "file_changed") && data.diff) {
+      // Изменение файла: до подтверждения — открыто, после записи — свёрнуто.
+      const det = document.createElement("details"); det.className = "diff-box"; det.open = data.kind === "diff";
+      const sum = document.createElement("summary");
+      sum.textContent = data.kind === "diff"
+        ? `${data.new ? "Новый файл" : "Изменения"}: ${data.path} (+${data.added} −${data.removed})`
+        : "Что изменено";
+      const pre = document.createElement("pre"); pre.className = "diff";
+      data.diff.split("\n").forEach(line => {
+        const span = document.createElement("span");
+        span.className = line.startsWith("@@") ? "hunk" : line.startsWith("+++") || line.startsWith("---") ? "head"
+          : line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : "";
+        span.textContent = line || " ";
+        pre.appendChild(span);
+      });
+      det.append(sum, pre); wrap.appendChild(det);
     }
     return wrap;
   }
@@ -420,6 +436,10 @@
     const b = s.browser;
     row(!b.last_error, true, `Браузер Джарвиса: ${b.running ? "запущен" : "не запущен (откроется при первой команде)"}` + (b.url ? ` · ${b.url}` : "") + (b.last_error ? ` · последняя ошибка: ${b.last_error}` : "") + ` · профиль: ${b.profile || "—"}`);
     s.checks.forEach(c => row(c.ok, !c.required, `${c.name}: ${c.detail}`));
+    const f = s.files || { roots: [], missing: [] };
+    row(f.roots.length > 0, true, f.roots.length
+      ? `Файлы: разрешены ${f.roots.join(", ")}` + (f.missing.length ? ` · не найдены: ${f.missing.join(", ")}` : "")
+      : "Файлы: папки не разрешены (config.toml → [files] allowed_dirs)" + (f.missing.length ? ` · не найдены: ${f.missing.join(", ")}` : ""));
     (s.mcp || []).forEach(m => {
       const st = { ready: "подключён", starting: "подключается…", error: "ошибка", off: "не подключён" }[m.state] || m.state;
       const tools = m.tools.length ? ` · инструменты: ${m.tools.length}` : "";

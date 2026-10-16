@@ -231,6 +231,8 @@ class Runtime:
                                                                  "last_error": "Playwright не установлен"},
             "tools": app.registry.describe(),
             "mcp": app.mcp.describe() if getattr(app, "mcp", None) else [],
+            "files": ({"roots": [str(r) for r in app.files.roots], "missing": app.files.missing}
+                      if getattr(app, "files", None) else {"roots": [], "missing": []}),
             "checks": [{"name": r.name, "ok": r.ok, "detail": r.detail, "required": r.required}
                        for r in checks.run_all(app.config, voice=False)],
         }
