@@ -128,6 +128,30 @@ max_facts = 200
 # Секреты не сохраняются; просмотр и удаление — вкладка «Память» в HUD.
 task_summaries = true
 
+[mcp]
+# Внешние MCP-серверы (Model Context Protocol). Каждый запускается как отдельная программа
+# на этом компьютере; модель видит только инструменты из allowed_tools, вызов проходит
+# через проверки Джарвиса и журнал. Инструменты не из auto_tools — только с подтверждением.
+# Сервер сам может ходить в сеть и к файлам: подключайте только те, которым доверяете.
+# Секреты не пишите сюда: в env_vars — имена переменных, значения — в файле .env.
+# Состояние подключений: HUD → Диагностика, журнал сервера — data/mcp/<имя>.log.
+enabled = true
+
+# Пример (раскомментируйте; нужен Node.js):
+# [mcp.servers.files]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "C:/Users/Me/Documents/Jarvis"]
+# allowed_tools = ["list_directory", "read_text_file", "search_files", "write_file"]
+# auto_tools = ["list_directory", "read_text_file", "search_files"]
+# timeout_seconds = 60
+#
+# [mcp.servers.github]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-github"]
+# env_vars = ["GITHUB_PERSONAL_ACCESS_TOKEN"]
+# allowed_tools = ["search_repositories", "get_file_contents"]
+# auto_tools = ["search_repositories", "get_file_contents"]
+
 [security]
 # Фразы аварийной остановки — обрабатываются до любой другой логики.
 emergency_phrases = ["стоп стоп", "аварийная остановка", "джарвис стоп"]

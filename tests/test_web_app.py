@@ -153,6 +153,7 @@ def test_status_lists_tools_and_checks(server):
     assert s["state"] == "idle" and s["provider"]["active"] == "ollama"
     assert any(t["name"] == "calculate" for t in s["tools"])
     assert any(c["name"] == "Python" for c in s["checks"])
+    assert s["mcp"] == []  # в config.toml серверов нет
 
 
 def test_screenshot_path_traversal(server):

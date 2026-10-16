@@ -230,6 +230,7 @@ class Runtime:
             "browser": app.browser.status() if app.browser else {"running": False,
                                                                  "last_error": "Playwright не установлен"},
             "tools": app.registry.describe(),
+            "mcp": app.mcp.describe() if getattr(app, "mcp", None) else [],
             "checks": [{"name": r.name, "ok": r.ok, "detail": r.detail, "required": r.required}
                        for r in checks.run_all(app.config, voice=False)],
         }

@@ -190,7 +190,10 @@ class Assistant:
                 self.conversation.add({"role": "assistant", "content": answer})
                 self.conversation.end_turn()
                 self.emit({"type": "confirm_resolved", "status": status})
-                return Reply(answer, data=getattr(result, "data", None))
+                data = getattr(result, "data", None)
+                # Пользователю — без служебной пометки «недоверенные данные» (она для модели).
+                shown = (data or {}).get("display") if status == ConfirmationManager.CONFIRMED else None
+                return Reply(shown or answer, data=data)
             # просрочено — обрабатываем как обычную реплику
 
         if self._pending_choice is not None:

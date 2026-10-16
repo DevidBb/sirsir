@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from . import calculator, checks, console_utf8
+from . import calculator, checks, console_utf8, mcp_client
 from .assistant import EXIT, MUTE, STOP, Assistant, Reply
 from .config import Config, load_dotenv
 from .llm import OllamaClient
@@ -97,6 +97,8 @@ class App:
         calculator.register_tools(self.registry)
         self._register_voice_tool()
         self._register_screen_tool()
+        # Внешние MCP-серверы ([mcp.servers.*]): подключаются в фоне, инструменты появляются по готовности.
+        self.mcp = mcp_client.setup(config, self.registry)
         self.assistant = Assistant(config, self.llm, self.registry, self.memory,
                                    on_setting_changed=self._on_setting_changed)
         self.assistant.agent_backend = make_agent_backend(config)
@@ -516,6 +518,8 @@ class App:
 
     def close(self) -> None:
         self.reminders.stop()
+        if self.mcp is not None:
+            self.mcp.close()
         if self.browser is not None:
             self.browser.close()
         self.memory.close()

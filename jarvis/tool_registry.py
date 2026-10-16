@@ -13,11 +13,15 @@ from typing import Any, Callable
 
 @dataclass
 class Param:
-    type: str  # "string" | "integer" | "boolean"
+    type: str  # "string" | "integer" | "number" | "boolean" | "array"
     description: str
     required: bool = True
     enum: list[str] | None = None
     max_length: int = 200
+    # Для "array": тип элементов (string, integer, number, boolean).
+    items: str | None = None
+    # Разрешить перевод строки и табуляцию (текст для внешних MCP-инструментов).
+    multiline: bool = False
 
 
 @dataclass
@@ -44,6 +48,8 @@ class Tool:
             prop: dict[str, Any] = {"type": p.type, "description": p.description}
             if p.enum:
                 prop["enum"] = p.enum
+            if p.type == "array":
+                prop["items"] = {"type": p.items or "string"}
             props[pname] = prop
         return {
             "type": "function",
@@ -96,7 +102,8 @@ class Choice(ToolResult):
         return obj
 
 
-_PY_TYPES = {"string": str, "integer": int, "boolean": bool}
+_PY_TYPES = {"string": str, "integer": int, "number": (int, float), "boolean": bool, "array": list}
+MAX_ARRAY_ITEMS = 100
 
 
 class ToolRegistry:
@@ -135,7 +142,7 @@ class ToolRegistry:
     def needs_confirmation(self, tool: Tool, args: dict[str, Any]) -> str | None:
         """Текст подтверждения или None, если можно выполнять сразу."""
         if tool.dangerous:
-            return self.confirm_text(tool, args)
+            return (tool.confirm_check(args) if tool.confirm_check else None) or self.confirm_text(tool, args)
         if tool.confirm_check is not None:
             return tool.confirm_check(args)
         return None
@@ -162,21 +169,32 @@ class ToolRegistry:
                     raise ToolError(f"Не указан аргумент {pname}")
                 continue
             value = args[pname]
-            expected = _PY_TYPES[p.type]
-            if p.type == "integer" and isinstance(value, str) and value.strip().lstrip("-").isdigit():
-                value = int(value)
-            if not isinstance(value, expected) or (p.type == "integer" and isinstance(value, bool)):
-                raise ToolError(f"Аргумент {pname} должен быть типа {p.type}")
-            if isinstance(value, str):
-                value = value.strip()
-                if len(value) > p.max_length:
-                    raise ToolError(f"Аргумент {pname} слишком длинный")
-                if any(ord(ch) < 32 for ch in value):
-                    raise ToolError(f"Аргумент {pname} содержит управляющие символы")
+            if p.type == "array":
+                if not isinstance(value, list) or len(value) > MAX_ARRAY_ITEMS:
+                    raise ToolError(f"Аргумент {pname} должен быть списком (до {MAX_ARRAY_ITEMS})")
+                clean[pname] = [self._scalar(f"{pname}[{i}]", p.items or "string", v, p)
+                                for i, v in enumerate(value)]
+                continue
+            value = self._scalar(pname, p.type, value, p)
             if p.enum and value not in p.enum:
                 raise ToolError(f"Недопустимое значение {pname}: {value}")
             clean[pname] = value
         return tool, clean
+
+    @staticmethod
+    def _scalar(pname: str, ptype: str, value: Any, p: Param) -> Any:
+        if ptype == "integer" and isinstance(value, str) and value.strip().lstrip("-").isdigit():
+            value = int(value)
+        if not isinstance(value, _PY_TYPES[ptype]) or (ptype != "boolean" and isinstance(value, bool)):
+            raise ToolError(f"Аргумент {pname} должен быть типа {ptype}")
+        if isinstance(value, str):
+            value = value.strip()
+            if len(value) > p.max_length:
+                raise ToolError(f"Аргумент {pname} слишком длинный")
+            allowed = "\n\t" if p.multiline else ""
+            if any(ord(ch) < 32 and ch not in allowed for ch in value):
+                raise ToolError(f"Аргумент {pname} содержит управляющие символы")
+        return value
 
     def confirm_text(self, tool: Tool, args: dict[str, Any]) -> str:
         template = tool.confirm_template or f"выполнить действие {tool.name}"

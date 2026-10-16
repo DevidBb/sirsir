@@ -208,7 +208,8 @@
       if (!replay) toolRows.push(li);
     } else if (ev.type === "tool_end") {
       const row = toolRows.shift();
-      const text = (ev.text || "").split("\n")[0];
+      // Для ответа внешнего MCP-сервера — сам ответ, без служебной пометки для модели.
+      const text = ((ev.data && ev.data.display) || ev.text || "").split("\n")[0];
       if (row && !replay) { row.className = ev.ok ? "ok" : "fail"; const d = document.createElement("span"); d.className = "d"; d.textContent = text; row.appendChild(d); }
       else if (replay) { /* в истории tool_end идёт сразу после tool_start */ }
       else timelineAdd(ev.ok ? "ok" : "fail", name, text, "", ev.ts);
@@ -419,6 +420,12 @@
     const b = s.browser;
     row(!b.last_error, true, `Браузер Джарвиса: ${b.running ? "запущен" : "не запущен (откроется при первой команде)"}` + (b.url ? ` · ${b.url}` : "") + (b.last_error ? ` · последняя ошибка: ${b.last_error}` : "") + ` · профиль: ${b.profile || "—"}`);
     s.checks.forEach(c => row(c.ok, !c.required, `${c.name}: ${c.detail}`));
+    (s.mcp || []).forEach(m => {
+      const st = { ready: "подключён", starting: "подключается…", error: "ошибка", off: "не подключён" }[m.state] || m.state;
+      const tools = m.tools.length ? ` · инструменты: ${m.tools.length}` : "";
+      const skipped = m.skipped.length ? ` · пропущены: ${m.skipped.join("; ")}` : "";
+      row(m.state === "ready", m.state === "starting", `MCP ${m.name}: ${st}${m.error ? " — " + m.error : ""}${tools}${skipped}`);
+    });
     const v = s.voice || {};
     row(v.enabled, !v.error, v.enabled ? `Локальный голос: включён, микрофон ${v.mic || "по умолчанию"}${v.muted ? " (выключен)" : ""}`
       : `Локальный голос: ${v.error ? "ошибка — " + v.error : "не запущен (run_web.bat или --web --voice)"}`);

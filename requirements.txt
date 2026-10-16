@@ -12,6 +12,7 @@ playwright>=1.49          # после установки: python -m playwright 
 starlette>=0.40
 uvicorn>=0.30
 websockets>=12            # WebSocket для uvicorn
+mcp>=1.10                 # внешние MCP-серверы ([mcp.servers.*] в config.toml)
 
 # Windows и система
 psutil>=5.9
