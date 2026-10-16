@@ -80,6 +80,7 @@
   function setProvider(p) {
     const b = $("providerBadge");
     if (p === "claude") { b.textContent = "Claude · облако"; b.className = "badge cloud"; }
+    else if (p === "hybrid") { b.textContent = "Гибрид · локально + Claude"; b.className = "badge cloud"; }
     else { b.textContent = "Ollama · локально"; b.className = "badge local"; }
   }
 
