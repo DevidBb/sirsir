@@ -266,3 +266,41 @@ def test_prompt_requests_are_composed_as_prompts(config):
         assert "Не ограничивайся 80 словами" in compose_system_prompt(phrase)
 
     assert "до 80 слов" in compose_system_prompt("Напиши письмо начальнику")
+
+
+
+def test_hybrid_prompt_uses_claude_without_tools_and_targets_chatgpt(config):
+    from jarvis.assistant import Reply
+
+    a = make(config, [text("Эта локальная генерация не должна вызываться.")])
+    a.config.set("llm.provider", "hybrid")
+    a.windows._titles.append("ChatGPT — Google Chrome")
+
+    class FakeClaude:
+        def __init__(self):
+            self.calls = []
+            self.reset_calls = 0
+
+        def run(self, isolated, request, on_sentence=None):
+            self.calls.append(request)
+            assert isolated.turn_tools() == []
+            assert "готовый к копированию" in isolated.skill_prompt()
+            return Reply("Ты — эксперт по созданию сайтов. Подготовь подробный план и код.")
+
+        def reset(self):
+            self.reset_calls += 1
+
+    claude = FakeClaude()
+    a.agent_backend = claude
+    draft = "Ты — эксперт по созданию сайтов. Подготовь подробный план и код."
+    reply = a._compose("Напиши промпт для ChatGPT, чтобы он создал сайт.", target_window="ChatGPT")
+
+    assert "Требуется подтверждение" in reply.text
+    assert claude.calls == ["Напиши промпт для ChatGPT, чтобы он создал сайт."]
+    assert claude.reset_calls == 1
+    assert a.fake.requests == []
+
+    result = a.handle("подтверждаю")
+    assert result.text == "Напечатал."
+    assert a.typed == [draft + " "]
+    assert a.windows.focused == ["ChatGPT — Google Chrome"]
