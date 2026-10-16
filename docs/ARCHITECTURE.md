@@ -70,7 +70,9 @@
    CLAUDE.md), `strict_mcp_config`, `allowed_tools` = только `mcp__jarvis__*`, `can_use_tool` отклоняет
    всё остальное. Инструменты Джарвиса — in-process MCP-сервер, обработчик вызывает тот же
    `Assistant._run_tool` (валидация, лимиты, подтверждения, журнал). Контекст между ходами — `resume`.
-   Отмена — `client.interrupt()`.
+   Отмена — `client.interrupt()`. Независимые части задачи Claude может поручить агентам Джарвиса
+   (`AGENT_ROLES`: researcher, file-reader) — у каждого только читающие инструменты; встроенные агенты
+   Claude Code запрещены; агенты выполняются синхронно (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`).
 8. **Подтверждения едины для всех путей.** Опасное действие не выполняется, а регистрируется в
    `ConfirmationManager`; модель получает «нужно подтверждение» и заканчивает ход; кнопка
    «Подтвердить» в HUD отправляет фразу подтверждения — тот же путь, что голосом.
@@ -81,7 +83,7 @@
 
 Сервер → клиент: `hello` (состояние, история), `task`, `state` (`idle|thinking|acting|error`),
 `delta` (поток текста), `tool_start` / `tool_end` (имя, аргументы без приватных, результат, `data`),
-`confirm` (с `details` — например, diff файла), `confirm_resolved`, `reply` (текст, `data`, `pending_confirmation`), `cancelled`, `notice`, `skill` (включён навык); у `task`/`reply` плановой задачи — `scheduled: true`.
+`confirm` (с `details` — например, diff файла), `confirm_resolved`, `reply` (текст, `data`, `pending_confirmation`), `cancelled`, `notice`, `skill` (включён навык), `delegate` (поручение агенту); у `task`/`reply` плановой задачи — `scheduled: true`.
 
 Клиент → сервер: `message`, `cancel`, `confirm` (`answer: true|false`), `tool` (только кнопки из
 белого списка `UI_TOOLS`, например `open_result`).

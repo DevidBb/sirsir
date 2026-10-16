@@ -1,5 +1,7 @@
 """Инструменты браузера и поиска в связке с помощником (без настоящего браузера)."""
 
+import threading
+
 import pytest
 
 from conftest import FakeLLM, text, tool_call
@@ -14,6 +16,7 @@ from jarvis.web_tools import WebTools
 class FakeBrowser:
     def __init__(self):
         self.calls = []
+        self.lock = threading.RLock()
         self.last_elements = {}
         self.fail = None
 

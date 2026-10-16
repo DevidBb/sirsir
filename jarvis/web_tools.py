@@ -99,6 +99,16 @@ class WebTools:
             return fail(str(e))
         return self._page_result("Открыл.", info)
 
+    def fetch_page(self, url: str) -> ToolResult:
+        """Текст страницы во временной вкладке — для агентов, работающих параллельно."""
+        try:
+            info = self.browser.fetch(url)
+        except BrowserError as e:
+            return fail(str(e))
+        return ToolResult(f"{page_summary(info)}\n{UNTRUSTED_NOTE}\n<untrusted>\n"
+                          f"{info.text or '(текст страницы недоступен)'}\n</untrusted>",
+                          {"kind": "page", "url": info.url, "title": info.title, "chars": len(info.text)})
+
     def read_page(self, url: str = "") -> ToolResult:
         try:
             if url:
@@ -200,17 +210,21 @@ class WebTools:
         tools = [
             Tool("internet_search", "Найти информацию в интернете. Возвращает заголовки, адреса и "
                  "фрагменты результатов. Чтобы прочитать источник — read_page(url).",
-                 self.internet_search, {"query": Param("string", "Поисковый запрос")}, category="web"),
+                 self.internet_search, {"query": Param("string", "Поисковый запрос")}, category="web",
+                 read_only=True),
             Tool("youtube_search", "Найти видео на YouTube: названия, каналы, длительность, просмотры, ссылки.",
                  self.youtube_search, {"query": Param("string", "Что искать"),
                                        "limit": Param("integer", "Сколько видео (1-10)", required=False)},
-                 category="web"),
+                 category="web", read_only=True),
             Tool("open_result", "Открыть в браузере результат последнего поиска по номеру (с 1).",
                  self.open_result, {"index": Param("integer", "Номер результата")}, category="web"),
             Tool("read_page", "Прочитать текущую страницу браузера (или открыть url и прочитать): текст и "
                  "пронумерованные кнопки, ссылки, поля.", self.read_page,
                  {"url": Param("string", "Адрес (необязательно)", required=False, max_length=2000)},
-                 category="browser"),
+                 category="browser", read_only=True),
+            Tool("fetch_page", "Прочитать текст страницы по адресу во временной вкладке (без кнопок и "
+                 "полей; текущая вкладка не меняется).", self.fetch_page,
+                 {"url": Param("string", "Адрес http(s)", max_length=2000)}, category="web", read_only=True),
             Tool("browser_open", "Открыть адрес в браузере Джарвиса.", self.browser_open,
                  {"url": Param("string", "Адрес http(s)", max_length=2000),
                   "new_tab": Param("boolean", "В новой вкладке", required=False)}, category="browser"),
@@ -235,4 +249,14 @@ class WebTools:
                  self.screenshot, category="browser"),
         ]
         for tool in tools:
+            if tool.name != "fetch_page":  # fetch_page и так одно действие во временной вкладке
+                tool.handler = self._locked(tool.handler)
             registry.register(tool)
+
+    def _locked(self, handler):
+        """Действие целиком (открыть + прочитать) под замком браузера: параллельные агенты
+        не переключат страницу посреди шага."""
+        def run(**kwargs):
+            with self.browser.lock:
+                return handler(**kwargs)
+        return run

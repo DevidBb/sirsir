@@ -175,6 +175,10 @@ class BrowserController:
         self.page = None
         self.last_elements: dict[int, Element] = {}
         self.last_error = ""
+        # Составное действие (открыть + прочитать) держит этот замок, чтобы параллельные агенты
+        # не переключали страницу друг у друга между шагами.
+        self.lock = threading.RLock()
+        self._temp_page = False
 
     # --- служебный поток ---
     def _worker(self) -> None:
@@ -250,8 +254,9 @@ class BrowserController:
         return context
 
     def _on_new_page(self, page) -> None:
-        # Ссылка открылась в новой вкладке — работаем с ней.
-        self.page = page
+        # Ссылка открылась в новой вкладке — работаем с ней (кроме временных вкладок fetch).
+        if not self._temp_page:
+            self.page = page
 
     def _shutdown(self) -> None:
         try:
@@ -332,6 +337,28 @@ class BrowserController:
                         for item in raw]
             self.last_elements = {e.ref: e for e in elements}
         return PageInfo(page.title(), page.url, text[:max_text], elements)
+
+    def fetch(self, url: str, max_text: int = MAX_TEXT) -> PageInfo:
+        """Прочитать адрес во временной вкладке и закрыть её: текущая вкладка не меняется."""
+        url = check_url(url)
+
+        def go():
+            self._temp_page = True
+            try:
+                page = self.context.new_page()
+            finally:
+                self._temp_page = False
+            try:
+                page.goto(url, wait_until="domcontentloaded")
+                try:
+                    page.wait_for_load_state("networkidle", timeout=3000)
+                except Exception:  # noqa: BLE001
+                    pass
+                text = page.evaluate(TEXT_JS) or ""
+                return PageInfo(page.title(), page.url, text[:max_text], [])
+            finally:
+                page.close()
+        return self._run(go)
 
     def read(self, max_text: int = MAX_TEXT) -> PageInfo:
         return self._run(lambda: self._info(True, max_text))

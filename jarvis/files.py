@@ -330,17 +330,17 @@ class FileTools:
                      max_length=500)
         registry.register(Tool("files_list", f"Список файлов в папке (разрешены только: {roots})",
                                self.list_dir, {"path": Param("string", "Папка; пусто — корень", required=False,
-                                                             max_length=500)}, category="files"))
+                                                             max_length=500)}, category="files", read_only=True))
         registry.register(Tool("files_read", "Прочитать текстовый файл с номерами строк", self.read_file,
                                {"path": path,
                                 "start_line": Param("integer", "С какой строки (по умолчанию 1)", required=False),
                                 "max_lines": Param("integer", f"Сколько строк (до {MAX_LINES})", required=False)},
-                               category="files"))
+                               category="files", read_only=True))
         registry.register(Tool("files_search", "Найти текст в файлах разрешённых папок", self.search,
                                {"query": Param("string", "Что искать", max_length=200),
                                 "path": Param("string", "Папка (необязательно)", required=False, max_length=500),
                                 "pattern": Param("string", "Маска имени, например *.py", required=False,
-                                                 max_length=50)}, category="files"))
+                                                 max_length=50)}, category="files", read_only=True))
         # Изменения — всегда с подтверждением; пользователь видит diff в HUD.
         registry.register(Tool("files_write", "Создать файл или полностью заменить его текст "
                                "(пользователь увидит diff и подтвердит)", self.write_file,

@@ -135,3 +135,10 @@ def test_confirmation_tolerates_asr_errors(answer, ok):
     status, _ = cm.resolve(answer)
     assert (status == cm.CONFIRMED) == ok
     assert calls == ([1] if ok else [])
+
+
+def test_read_only_actions_have_separate_higher_limit():
+    from jarvis.security import CommandGuard
+    guard = CommandGuard(4, 2, clock=lambda: 0.0)
+    assert guard.allow_action() and guard.allow_action() and not guard.allow_action()
+    assert sum(guard.allow_action(read_only=True) for _ in range(20)) == 2 * CommandGuard.READ_FACTOR

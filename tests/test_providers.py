@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("claude_agent_sdk")
 import claude_agent_sdk  # noqa: E402
-from claude_agent_sdk import AssistantMessage, ResultMessage, StreamEvent, TextBlock  # noqa: E402
+from claude_agent_sdk import AssistantMessage, ResultMessage, StreamEvent, TextBlock, ToolUseBlock  # noqa: E402
 
 from conftest import FakeLLM  # noqa: E402
 from jarvis.assistant import STOP, Assistant  # noqa: E402
@@ -184,3 +184,39 @@ def test_skill_restricts_claude_tools(env, tmp_path):
     opts = FakeClient.seen_options[0]
     assert opts.allowed_tools == ["mcp__jarvis__lookup"]
     assert "Ищи аккуратно." in opts.system_prompt
+
+
+def test_delegation_agents_are_read_only_and_builtin_agents_denied(env):
+    from claude_agent_sdk import AgentDefinition, PermissionResultAllow, PermissionResultDeny
+    assistant, _, calls, events = env
+    for name in ("internet_search", "fetch_page"):
+        assistant.registry.register(Tool(name, name, lambda **a: "ok", {"q": Param("string", "q", required=False)}))
+    FakeClient.script = [
+        AssistantMessage(content=[ToolUseBlock("t1", "Agent", {"subagent_type": "researcher",
+                                                               "description": "цены в Германии"})], model="m"),
+        AssistantMessage(content=[TextBlock("текст агента")], model="m", parent_tool_use_id="t1"),
+        result("Сводка.")]
+    reply = assistant.handle("сравни цены на iphone в трёх странах и дай вывод")
+    assert reply.text == "Сводка."
+    opts = FakeClient.seen_options[0]
+    assert opts.tools == ["Agent"] and list(opts.agents) == ["researcher"]
+    agent = opts.agents["researcher"]
+    assert isinstance(agent, AgentDefinition)
+    assert agent.tools == ["mcp__jarvis__internet_search", "mcp__jarvis__fetch_page"]  # wipe недоступен
+    assert "Agent" not in opts.allowed_tools  # проходит через can_use_tool
+    assert agent.background is False and opts.env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1"
+    assert any(e["type"] == "delegate" and e["agent"] == "researcher" for e in events)
+    assert not any(e["type"] == "delta" and "агента" in e.get("text", "") for e in events)
+    check = opts.can_use_tool
+    assert isinstance(asyncio.run(check("Agent", {"subagent_type": "researcher"}, None)), PermissionResultAllow)
+    for name, inp in [("Agent", {"subagent_type": "general-purpose"}), ("Agent", {}), ("Bash", {"command": "ls"})]:
+        assert isinstance(asyncio.run(check(name, inp, None)), PermissionResultDeny)
+
+
+def test_delegation_can_be_disabled(env):
+    assistant, backend, _, _ = env
+    assistant.registry.register(Tool("fetch_page", "f", lambda **a: "ok"))
+    backend.delegate = False
+    FakeClient.script = [result("ок")]
+    assistant.handle("сравни подробно два варианта и дай вывод")
+    assert FakeClient.seen_options[0].tools == [] and not FakeClient.seen_options[0].agents

@@ -2,7 +2,7 @@
 name: research
 description: Исследовать вопрос по нескольким источникам в интернете, сравнить их и дать вывод со ссылками.
 triggers: ["сравни источники", "исследуй тему", "проведи исследование", "разберись в теме", "research"]
-tools: [internet_search, open_result, read_page, browser_back, browser_tabs, browser_switch_tab, search_memory]
+tools: [internet_search, open_result, read_page, fetch_page, browser_back, browser_tabs, browser_switch_tab, search_memory]
 max_steps: 10
 ---
 Задача: дать пользователю проверенный ответ, опираясь на несколько независимых источников.

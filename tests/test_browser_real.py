@@ -86,3 +86,21 @@ def test_stale_ref_is_reported(site, browser):
     browser.last_elements = {}
     with pytest.raises(BrowserError):
         browser.element(99)
+
+
+def test_fetch_reads_in_temp_tab_and_parallel_tools_do_not_clash(site, browser):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from jarvis.web_tools import WebTools
+    browser.open(site + "/index.html")
+    tabs_before = len(browser.tabs())
+    tools = WebTools(browser, None)
+    out = tools.fetch_page(site + "/results.html?q=x")
+    assert out.ok and "<untrusted>" in out
+    assert browser.read().url.endswith("/index.html") and len(browser.tabs()) == tabs_before
+    # Параллельные агенты: чтение по адресу целиком под замком, страницы не перепутываются.
+    urls = [site + "/index.html", site + "/results.html?q=a", site + "/index.html", site + "/results.html?q=b"]
+    with ThreadPoolExecutor(4) as pool:
+        pages = list(pool.map(lambda u: tools._locked(tools.read_page)(url=u), urls))
+    for url, page in zip(urls, pages):
+        assert url.replace(site, "").split("?")[0] in page

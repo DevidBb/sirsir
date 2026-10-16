@@ -321,7 +321,7 @@ class Memory:
         registry.register(Tool(
             "search_memory", "Найти в долговременной памяти: факты, предпочтения, заметки, итоги "
             "прошлых задач", search_memory,
-            {"query": Param("string", "Что искать", max_length=200)}, category="memory"))
+            {"query": Param("string", "Что искать", max_length=200)}, category="memory", read_only=True))
         registry.register(Tool(
             "forget_fact", "Забыть факты, содержащие фрагмент текста", forget,
             {"fragment": Param("string", "Фрагмент текста факта", max_length=100)}))

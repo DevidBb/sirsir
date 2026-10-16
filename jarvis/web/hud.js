@@ -64,6 +64,7 @@
       case "cancelled": hideConfirm(); timelineAdd("fail", "Задача остановлена", ""); stopSpeech(); break;
       case "notice": addSystem(ev.text); if (ev.reminder) speak(ev.text); break;
       case "skill": timelineAdd("task", "Навык: " + ev.name, ev.description || "", "", ev.ts); break;
+      case "delegate": timelineAdd("task", "Поручение агенту " + (AGENT_TEXT[ev.agent] || ev.agent), ev.text || "", "", ev.ts); break;
     }
   }
 
@@ -217,6 +218,7 @@
     if (!args) return "";
     return Object.entries(args).map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`).join(", ");
   }
+  const AGENT_TEXT = { researcher: "«исследователь»", "file-reader": "«аналитик файлов»" };
   function timelineEvent(ev, replay) {
     const name = TOOL_TEXT[ev.name] || ev.name;
     if (ev.type === "task") timelineAdd("task", ev.text, "", "task", ev.ts);

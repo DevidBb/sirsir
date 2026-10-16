@@ -160,6 +160,8 @@ class CommandGuard:
         self.clock = clock
         self._last_command: tuple[str, float] | None = None
         self._actions: deque[float] = deque()
+        self._reads: deque[float] = deque()
+        self._lock = threading.Lock()  # параллельные агенты вызывают инструменты из разных потоков
 
     def is_duplicate_command(self, text: str) -> bool:
         """True, если та же фраза уже звучала в течение окна дублирования."""
@@ -169,14 +171,20 @@ class CommandGuard:
         self._last_command = (norm, now)
         return bool(last and last[0] == norm and now - last[1] < self.duplicate_window)
 
-    def allow_action(self) -> bool:
-        now = self.clock()
-        while self._actions and now - self._actions[0] > 60:
-            self._actions.popleft()
-        if len(self._actions) >= self.max_per_minute:
-            return False
-        self._actions.append(now)
-        return True
+    # Чтение (поиск, страницы, файлы) безопаснее действий, но тоже ограничено — от зацикливания.
+    READ_FACTOR = 5
+
+    def allow_action(self, read_only: bool = False) -> bool:
+        with self._lock:
+            now = self.clock()
+            bucket = self._reads if read_only else self._actions
+            limit = self.max_per_minute * (self.READ_FACTOR if read_only else 1)
+            while bucket and now - bucket[0] > 60:
+                bucket.popleft()
+            if len(bucket) >= limit:
+                return False
+            bucket.append(now)
+            return True
 
 
 class NetworkBlockedError(PermissionError):

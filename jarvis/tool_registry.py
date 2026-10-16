@@ -45,6 +45,8 @@ class Tool:
     confirm_timeout: float | None = None
     # Аргументы, которые не пишутся в журнал (вводимый текст и т.п.).
     private_params: tuple[str, ...] = ()
+    # Только читает (поиск, чтение страниц и файлов): отдельный, более высокий лимит в минуту.
+    read_only: bool = False
     # Группа для интерфейса и диагностики: system, browser, web, memory...
     category: str = "general"
 

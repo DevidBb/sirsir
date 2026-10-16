@@ -636,7 +636,7 @@ class Assistant:
             return f"Ошибка: {e}"
         if self.emergency.active:
             return "Остановлено пользователем, действие не выполнено."
-        if not self.guard.allow_action():
+        if not self.guard.allow_action(tool.read_only):
             return "Ошибка: слишком много действий за минуту, действие заблокировано."
         shown = self.registry.loggable(tool, clean)
         logged = json.dumps(shown, ensure_ascii=False)
