@@ -334,13 +334,16 @@ class Assistant:
         except Exception:  # интерфейс не должен ронять обработку команды
             log.exception("Ошибка обработчика событий")
 
-    def _route_intent(self, intent: Intent) -> Intent:
-        """Поиск на YouTube и в интернете — настоящими результатами, если есть браузер."""
+    def _route_intent(self, intent: Intent, original_text: str = "") -> Intent:
+        """Поиск — сразу; запросы на сравнение/анализ — через модель."""
         if intent.tool != "web_search":
             return intent
         names = self.registry.names()
         site = intent.args.get("site", "default")
-        if is_multistep_request(intent.args.get("query", "")):
+        # Парсер быстрого поиска может включить слова «сравни источники» в сам
+        # поисковый запрос. Проверяем и выделенный запрос, и исходную реплику.
+        if (is_multistep_request(intent.args.get("query", ""))
+                or is_multistep_request(original_text)):
             return Intent("_llm")  # «найди …, сравни и дай вывод» — план из нескольких шагов
         if site == "youtube" and "youtube_search" in names:
             return Intent("youtube_search", {"query": intent.args["query"]})
@@ -355,7 +358,7 @@ class Assistant:
         if intent is not None and intent.tool in INPUT_INTENTS:
             return self._input_intent(text, intent)
         if intent is not None:
-            intent = self._route_intent(intent)
+            intent = self._route_intent(intent, text)
         if intent is None or intent.tool not in self.registry.names():
             return None
         outcome = self._run_tool(intent.tool, intent.args)
