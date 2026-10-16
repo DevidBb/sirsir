@@ -30,6 +30,13 @@ class Tool:
     dangerous: bool = False
     # Текст для подтверждения, например "удалить файл {path}".
     confirm_template: str = ""
+    # Подтверждение в зависимости от аргументов: вернуть текст «что сделать» или None.
+    # Например, клик по кнопке «Купить» требует подтверждения, по ссылке — нет.
+    confirm_check: Callable[[dict[str, Any]], str | None] | None = None
+    # Аргументы, которые не пишутся в журнал (вводимый текст и т.п.).
+    private_params: tuple[str, ...] = ()
+    # Группа для интерфейса и диагностики: system, browser, web, memory...
+    category: str = "general"
 
     def schema(self) -> dict[str, Any]:
         props = {}
@@ -56,7 +63,24 @@ class ToolError(ValueError):
     pass
 
 
-class Choice(str):
+class ToolResult(str):
+    """Текст результата (для модели и голоса) плюс структурированные данные для интерфейса.
+
+    ``data`` — словарь с ключом ``kind`` (``web``, ``youtube``, ``page``, ``screenshot``…).
+    ``ok=False`` — инструмент не справился; текст объясняет почему.
+    """
+
+    data: dict[str, Any] | None
+    ok: bool
+
+    def __new__(cls, text: str, data: dict[str, Any] | None = None, ok: bool = True) -> "ToolResult":
+        obj = super().__new__(cls, text)
+        obj.data = data
+        obj.ok = ok
+        return obj
+
+
+class Choice(ToolResult):
     """Результат «нашлось несколько вариантов»: текст вопроса и варианты.
 
     Это обычная строка (её видит LLM и слышит пользователь), но помощник
@@ -65,8 +89,9 @@ class Choice(str):
 
     options: list[tuple[str, Callable[[], str]]]
 
-    def __new__(cls, text: str, options: list[tuple[str, Callable[[], str]]]) -> "Choice":
-        obj = super().__new__(cls, text)
+    def __new__(cls, text: str, options: list[tuple[str, Callable[[], str]]],
+                data: dict[str, Any] | None = None) -> "Choice":
+        obj = super().__new__(cls, text, data)
         obj.options = list(options)
         return obj
 
@@ -93,6 +118,33 @@ class ToolRegistry:
 
     def schemas(self) -> list[dict[str, Any]]:
         return [t.schema() for t in self._tools.values()]
+
+    def tools(self) -> list[Tool]:
+        return list(self._tools.values())
+
+    def describe(self) -> list[dict[str, Any]]:
+        """Список инструментов для интерфейса и диагностики."""
+        return [{"name": t.name, "description": t.description, "category": t.category,
+                 "permission": "confirm" if t.dangerous else
+                 ("conditional" if t.confirm_check else "auto"),
+                 "params": {n: {"type": p.type, "required": p.required, "description": p.description,
+                                **({"enum": p.enum} if p.enum else {})}
+                            for n, p in t.params.items()}}
+                for t in self._tools.values()]
+
+    def needs_confirmation(self, tool: Tool, args: dict[str, Any]) -> str | None:
+        """Текст подтверждения или None, если можно выполнять сразу."""
+        if tool.dangerous:
+            return self.confirm_text(tool, args)
+        if tool.confirm_check is not None:
+            return tool.confirm_check(args)
+        return None
+
+    @staticmethod
+    def loggable(tool: Tool, args: dict[str, Any]) -> dict[str, Any]:
+        """Аргументы для журнала: приватные заменены длиной."""
+        return {k: (f"<{len(str(v))} симв.>" if k in tool.private_params else v)
+                for k, v in args.items()}
 
     def validate(self, name: str, args: Any) -> tuple[Tool, dict[str, Any]]:
         tool = self.get(name)

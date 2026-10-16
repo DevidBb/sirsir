@@ -19,10 +19,11 @@ from typing import Any
 
 from . import calculator, checks, console_utf8
 from .assistant import EXIT, MUTE, STOP, Assistant, Reply
-from .config import Config
+from .config import Config, load_dotenv
 from .llm import OllamaClient
 from .memory import Memory
 from .notes import Notes
+from .providers import make_agent_backend
 from .reminders import Reminders
 from .security import NetworkGuard
 from .text_to_speech import Speaker, play_beep
@@ -76,7 +77,12 @@ class App:
         self.speaker = make_speaker(config, voice)
 
         self.registry = ToolRegistry()
-        WindowsController(config).register_tools(self.registry)
+        self.controller = WindowsController(config)
+        self.controller.register_tools(self.registry)
+        self.browser = None
+        self.web_tools = None
+        if config.get("browser.enabled", True):
+            self._setup_browser()
         self.memory.register_tools(self.registry, on_setting_changed=self._on_setting_changed)
         self.reminders = Reminders(self.memory)
         self.reminders.register_tools(self.registry)
@@ -86,6 +92,38 @@ class App:
         self._register_voice_tool()
         self.assistant = Assistant(config, self.llm, self.registry, self.memory,
                                    on_setting_changed=self._on_setting_changed)
+        self.assistant.agent_backend = make_agent_backend(config)
+
+    def _setup_browser(self) -> None:
+        """Браузер Джарвиса (Playwright). Без Playwright помощник работает как раньше."""
+        from importlib.util import find_spec
+        if find_spec("playwright") is None:
+            log.warning("Playwright не установлен: поиск и управление браузером недоступны")
+            return
+        from .browser import BrowserController
+        from .web_search import WebSearch
+        from .web_tools import WebTools
+        local_browsers = self.config.root / ".playwright"
+        self.browser = BrowserController(
+            self.config.path("browser.profile_dir"),
+            headless=bool(self.config.get("browser.headless", False)),
+            channel=str(self.config.get("browser.channel", "chromium") or ""),
+            timeout_ms=int(self.config.get("browser.timeout_ms", 20000)),
+            browsers_path=local_browsers if local_browsers.exists() else None,
+            screenshots_dir=self.config.root / "data" / "screenshots")
+        self.web_tools = WebTools(self.browser, WebSearch(
+            self.browser, self.config.get("browser.search_engines", ["duckduckgo", "bing"])))
+        self.web_tools.register_tools(self.registry)
+
+    def set_provider(self, provider: str) -> str:
+        """Переключение модели из интерфейса (сохраняется в memory.db)."""
+        from .providers import PROVIDERS
+        if provider not in PROVIDERS:
+            raise ValueError(f"Неизвестный провайдер: {provider}")
+        self.config.set("llm.provider", provider)
+        self.memory.set_setting("llm.provider", provider)
+        self.assistant.agent_backend = make_agent_backend(self.config)
+        return provider
 
     # --- настройки ---
     def _apply_saved_settings(self) -> None:
@@ -419,6 +457,8 @@ class App:
 
     def close(self) -> None:
         self.reminders.stop()
+        if self.browser is not None:
+            self.browser.close()
         self.memory.close()
 
 
@@ -496,6 +536,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jarvis", description="Локальный голосовой помощник")
     parser.add_argument("--config", help="путь к config.toml")
     parser.add_argument("--text", action="store_true", help="текстовый режим без микрофона")
+    parser.add_argument("--web", action="store_true",
+                        help="интерфейс HUD в браузере (http://127.0.0.1:8765)")
+    parser.add_argument("--no-open", action="store_true", help="с --web: не открывать страницу HUD")
     parser.add_argument("--check", action="store_true", help="только проверить компоненты")
     parser.add_argument("--skip-check", action="store_true", help="не проверять при запуске")
     parser.add_argument("--tray", action="store_true", help="значок в области уведомлений")
@@ -530,10 +573,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     config = Config.load(args.config)
+    load_dotenv(config.root / ".env")
     # Настройки, сохранённые голосом и мастером микрофона (memory.db), — до проверок,
     # иначе проверка показывает микрофон по умолчанию, а не выбранный.
     apply_saved_settings(config)
-    voice = not args.text
+    voice = not (args.text or args.web)
     setup_logging(config, args.verbose)
     setup_audit_log(config)
     if args.setup_mic:
@@ -550,7 +594,7 @@ def main(argv: list[str] | None = None) -> int:
     log.info("Запуск JARVIS: %s, Python %s, режим %s", _platform.platform(),
              sys.version.split()[0], "голос" if voice else "текст")
 
-    if config.get("llm.autostart_ollama", True):
+    if config.get("llm.autostart_ollama", True) and config.get("llm.provider", "ollama") == "ollama":
         from .llm import OllamaClient as _Client, ensure_ollama
         status = ensure_ollama(_Client(config.get("llm.base_url"), config.get("llm.model")))
         if status == "started":
@@ -562,11 +606,22 @@ def main(argv: list[str] | None = None) -> int:
         ok = checks.report(checks.run_all(config, voice=voice))
         if args.check:
             return 0 if ok else 1
-        if not ok:
+        if not ok and args.web:
+            print("Часть компонентов недоступна — подробности на панели «Диагностика» в HUD.")
+        elif not ok:
             print("Исправьте ошибки выше или запустите с --skip-check.")
             return 1
 
     NetworkGuard(config.get("security.allowed_hosts", ["127.0.0.1", "localhost"])).install()
+    if args.web:
+        from . import web_app
+
+        def build() -> App:
+            core = App(config, voice=False)
+            if core.browser is not None:  # «открой ютуб» — в браузере Джарвиса, а не в системном
+                core.controller.open_url = core.browser.open_from_other_thread
+            return core
+        return web_app.run(config, build, open_browser=False if args.no_open else None)
     app = App(config, voice, tray=args.tray)
     try:
         app.run_voice() if voice else app.run_text()

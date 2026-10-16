@@ -68,6 +68,38 @@ preload = true
 # Если Ollama не запущена — запустить «ollama serve» автоматически.
 autostart_ollama = true
 max_tool_calls_per_turn = 3
+# Провайдер модели для сложных запросов (простые команды выполняются без модели):
+# "ollama" — локально (по умолчанию), "claude" — Claude Agent SDK, облако Anthropic
+# (нужен вход в Claude Code: «claude login», или ANTHROPIC_API_KEY в окружении).
+# Можно переключить в интерфейсе: Настройки → Модель.
+provider = "ollama"
+
+[llm.claude]
+# Пусто — модель Claude Code по умолчанию; можно "sonnet", "opus", "haiku" или полный id.
+model = "sonnet"
+# Сколько шагов (вызовов инструментов) может сделать агент за одну задачу.
+max_turns = 16
+timeout_seconds = 240
+work_dir = "data/agent"
+
+[browser]
+# Отдельный профиль Джарвиса: личный профиль браузера не используется,
+# пароли и cookies из него не читаются.
+profile_dir = "data/browser-profile"
+# "chromium" — браузер, скачанный Playwright (python -m playwright install chromium);
+# "msedge" или "chrome" — установленный в системе браузер (профиль всё равно отдельный).
+channel = "chromium"
+# Видимое окно. В фоновом режиме поисковики чаще показывают капчу.
+headless = false
+timeout_ms = 20000
+# Порядок поисковиков для «найди в интернете»: duckduckgo, bing.
+search_engines = ["duckduckgo", "bing"]
+
+[web]
+# Интерфейс HUD: только этот компьютер. Удалённый доступ не поддерживается.
+host = "127.0.0.1"
+port = 8765
+open_browser = true
 
 [tts]
 # "pyttsx3" — системные голоса Windows (SAPI5), ничего не скачивает.

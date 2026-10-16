@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>J.A.R.V.I.S.</title>
+<link rel="stylesheet" href="/static/hud.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark"></span>J.A.R.V.I.S.</div>
+  <div class="state-pill" id="statePill" data-state="idle">
+    <span class="dot"></span><span id="stateText">Готов</span><span class="state-detail" id="stateDetail"></span>
+  </div>
+  <div class="top-actions">
+    <span class="badge" id="providerBadge" title="Где работает модель">—</span>
+    <span class="badge" id="connBadge">нет связи</span>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="center">
+    <div class="core" id="core" data-state="idle" aria-hidden="true">
+      <div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div>
+      <div class="core-glow"></div>
+    </div>
+
+    <div class="chat" id="chat" aria-live="polite">
+      <div class="msg system">Напишите команду, например: «Открой YouTube и найди видео про локальных ИИ-ассистентов» или «Найди в интернете, что такое MCP, и сравни два источника».</div>
+    </div>
+
+    <div class="confirm" id="confirmBar" hidden>
+      <div class="confirm-text"><span class="confirm-icon">!</span><span id="confirmText"></span></div>
+      <div class="confirm-actions">
+        <button class="btn danger" id="confirmYes">Подтвердить</button>
+        <button class="btn" id="confirmNo">Отмена</button>
+      </div>
+    </div>
+
+    <form class="composer" id="composer" autocomplete="off">
+      <button type="button" class="icon-btn" id="micBtn" title="Голосовой ввод (браузер)" aria-pressed="false">
+        <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"/></svg>
+      </button>
+      <input id="input" placeholder="Команда для Джарвиса…" maxlength="4000">
+      <button type="submit" class="btn primary" id="sendBtn">Отправить</button>
+      <button type="button" class="btn danger" id="cancelBtn" title="Остановить текущую задачу">Стоп</button>
+    </form>
+    <div class="voice-row">
+      <label class="toggle"><input type="checkbox" id="ttsToggle"> Озвучивать ответы</label>
+      <button type="button" class="link-btn" id="shutUpBtn">Прервать речь</button>
+      <span class="hint" id="micHint"></span>
+    </div>
+  </section>
+
+  <aside class="side">
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="timeline">Ход задачи</button>
+      <button class="tab" data-tab="results">Результаты</button>
+      <button class="tab" data-tab="memory">Память</button>
+      <button class="tab" data-tab="settings">Настройки</button>
+      <button class="tab" data-tab="diag">Диагностика</button>
+    </nav>
+
+    <div class="panel active" id="tab-timeline">
+      <ol class="timeline" id="timeline"></ol>
+    </div>
+
+    <div class="panel" id="tab-results">
+      <div id="results"><p class="muted">Здесь появятся результаты поиска и видео.</p></div>
+    </div>
+
+    <div class="panel" id="tab-memory">
+      <div class="panel-head">
+        <h3>Что я помню</h3>
+        <button class="link-btn" id="memRefresh">обновить</button>
+      </div>
+      <form class="inline-form" id="factForm">
+        <input id="factInput" placeholder="Добавить факт или предпочтение" maxlength="300">
+        <button class="btn">Запомнить</button>
+      </form>
+      <p class="muted small">Пароли, токены и номера карт не сохраняются.</p>
+      <ul class="mem-list" id="facts"></ul>
+      <h3>Заметки</h3><ul class="mem-list" id="notes"></ul>
+      <h3>Напоминания</h3><ul class="mem-list" id="reminders"></ul>
+      <h3>Журнал действий</h3><ul class="log-list" id="actions"></ul>
+    </div>
+
+    <div class="panel" id="tab-settings">
+      <h3>Модель</h3>
+      <div id="providers" class="providers"></div>
+      <p class="muted small">Простые команды («открой ютуб», «найди на ютубе…») выполняются без модели.</p>
+      <h3>Инструменты</h3>
+      <ul class="tool-list" id="tools"></ul>
+    </div>
+
+    <div class="panel" id="tab-diag">
+      <div class="panel-head"><h3>Состояние</h3><button class="link-btn" id="diagRefresh">обновить</button></div>
+      <ul class="diag-list" id="diag"></ul>
+    </div>
+  </aside>
+</main>
+<script src="/static/markdown.js"></script>
+<script src="/static/hud.js"></script>
+</body>
+</html>

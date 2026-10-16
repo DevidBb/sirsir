@@ -7,6 +7,12 @@ vosk>=0.3.45              # фраза пробуждения, CPU
 faster-whisper>=1.0.3     # распознавание речи (CTranslate2, GPU/CPU)
 pyttsx3>=2.90             # синтез речи через голоса Windows (SAPI5)
 
+# Браузер, поиск, интерфейс HUD (python -m jarvis --web)
+playwright>=1.49          # после установки: python -m playwright install chromium
+starlette>=0.40
+uvicorn>=0.30
+websockets>=12            # WebSocket для uvicorn
+
 # Windows и система
 psutil>=5.9
 Send2Trash>=1.8           # удаление только в корзину

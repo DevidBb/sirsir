@@ -29,6 +29,14 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 if errorlevel 1 goto fail
 
+echo Скачиваю Chromium для браузера Джарвиса (Playwright), около 170 МБ...
+python -m playwright install chromium
+if errorlevel 1 (
+    echo ОШИБКА: Chromium не скачан - поиск и управление браузером не будут работать.
+    echo Повторите позже: .venv\Scripts\python -m playwright install chromium
+    set ERRORS=1
+)
+
 echo.
 if "%AUTO%"=="1" goto models_auto
 python scripts\download_models.py
@@ -72,6 +80,7 @@ python scripts\check_components.py
 echo.
 if "%ERRORS%"=="1" goto done_errors
 echo Готово. Дальше: .\setup_mic.bat - настройка микрофона, затем .\run.bat - запуск.
+echo Интерфейс HUD в браузере: .\run_web.bat
 echo (в PowerShell команды пишутся с .\ в начале; можно и просто двойной щелчок по файлу^)
 if "%AUTO%"=="0" pause
 exit /b 0

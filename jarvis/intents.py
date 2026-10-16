@@ -119,6 +119,22 @@ SEARCH_AFTER_OPEN_RE = re.compile(
     rf" (?:и|и там|а там|и потом) {SEARCH_VERB}(?: мне)? (?P<q>.+)$")
 WEB_SEARCH_RE = re.compile(r"^(?:загугли|погугли|гугли)(?: мне)? (?P<g>.+)$"
                            r"|^(?:найди|поищи|ищи|посмотри) в (?:интернете|инете|сети) (?P<d>.+)$")
+# English: «search youtube for X», «find X on youtube», «open youtube and search X», «google X».
+EN_YT_RE = re.compile(r"^(?:open youtube and )?(?:search|find|look up|look for|show me)(?: me)? "
+                      r"(?:youtube for |on youtube |videos? (?:about|on) )(?P<q>.+)$"
+                      r"|^(?:search|find|look up) (?P<q2>.+) on youtube$")
+EN_WEB_RE = re.compile(r"^(?:google|search the web for|search the internet for|search online for|"
+                       r"look up online|find online|search for) (?P<q>.+)$")
+# «Открой второе видео», «открой результат 3», «open the second result».
+RESULT_ORDINALS = {"первое": 1, "первый": 1, "первую": 1, "второе": 2, "второй": 2, "вторую": 2,
+                   "третье": 3, "третий": 3, "третью": 3, "четвертое": 4, "четвертый": 4,
+                   "четвертую": 4, "пятое": 5, "пятый": 5, "пятую": 5, "последнее": -1,
+                   "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5}
+RESULT_WORDS = r"(?:видео|ролик|видос|результат|ссылку|сайт|источник|video|result|link)"
+OPEN_RESULT_RE = re.compile(
+    rf"^(?:открой|включи|покажи|запусти|open|play|show)(?: мне)?(?: the)? "
+    rf"(?:(?P<w>{'|'.join(RESULT_ORDINALS)}) {RESULT_WORDS}|{RESULT_WORDS} (?:номер )?(?P<n>\d+)"
+    rf"|(?:номер )?(?P<n2>\d+) {RESULT_WORDS})$")
 MUSIC_RE = re.compile(r"^(?:включи|поставь|найди)(?: мне)? (?:песню|трек|музыку|клип|видео) (?P<q>.+)$")
 
 
@@ -160,6 +176,10 @@ class IntentMatcher:
             return Intent("type_in_window", {"window": m.group(1), "text": m.group(2).strip()})
         if COMPOSE_RE.match(norm):
             return Intent("compose_text", {"request": text.strip()})
+        m = OPEN_RESULT_RE.match(norm)
+        if m:
+            index = RESULT_ORDINALS[m.group("w")] if m.group("w") else int(m.group("n") or m.group("n2"))
+            return Intent("open_result", {"index": index})
         search = self._match_search(norm)
         if search is not None:
             return search
@@ -224,6 +244,12 @@ class IntentMatcher:
         m = MUSIC_RE.match(norm)
         if m:
             return Intent("web_search", {"query": m.group("q"), "site": self.music_site})
+        m = EN_YT_RE.match(norm)
+        if m:
+            return Intent("web_search", {"query": m.group("q") or m.group("q2"), "site": "youtube"})
+        m = EN_WEB_RE.match(norm)
+        if m:
+            return Intent("web_search", {"query": m.group("q"), "site": "default"})
         return None
 
     @staticmethod

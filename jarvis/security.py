@@ -39,6 +39,19 @@ def is_exact_phrase(text: str, phrases: list[str]) -> bool:
     return any(norm == normalize(p) for p in phrases)
 
 
+# Секреты в обычную память не попадают: пароли, токены, ключи API, номера карт.
+SECRET_RE = re.compile(
+    r"(?:парол|password|passwd|пин-?код|\bpin\b|токен|token|api[ _-]?key|секретн|secret|"
+    r"ключ api|cvv|cvc)\w*\b.*\S{4,}"
+    r"|\b(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|xox[bp]-[A-Za-z0-9-]{10,}|"
+    r"AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,})"
+    r"|\b(?:\d[ -]?){13,19}\b", re.I)
+
+
+def looks_secret(text: str) -> bool:
+    return bool(SECRET_RE.search(text or ""))
+
+
 class EmergencyStop:
     """Глобальный флаг аварийной остановки, видимый всем потокам."""
 

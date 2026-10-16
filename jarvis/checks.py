@@ -67,16 +67,50 @@ def check_packages(voice: bool, config: Config | None = None) -> list[CheckResul
 
 
 def check_ollama(config: Config) -> list[CheckResult]:
+    # Ollama обязательна, только если выбрана как провайдер модели.
+    required = str(config.get("llm.provider", "ollama")) == "ollama"
     client = OllamaClient(config.get("llm.base_url"), config.get("llm.model"))
     try:
         models = client.list_models()
     except LLMError as e:
-        return [CheckResult("Ollama", False, f"{e}. Запустите Ollama (ollama serve)")]
-    res = [CheckResult("Ollama", True, f"доступна, моделей: {len(models)}")]
+        return [CheckResult("Ollama", False, f"{e}. Запустите Ollama (ollama serve)", required)]
+    res = [CheckResult("Ollama", True, f"доступна, моделей: {len(models)}", required)]
     ok = client.has_model()
     res.append(CheckResult(f"модель {client.model}", ok,
-                           "установлена" if ok else f"не найдена; выполните: ollama pull {client.model}"))
+                           "установлена" if ok else f"не найдена; выполните: ollama pull {client.model}",
+                           required))
     return res
+
+
+def check_claude(config: Config) -> list[CheckResult]:
+    if str(config.get("llm.provider", "ollama")) != "claude":
+        return []
+    from .providers import ClaudeAgentBackend
+    ok, note = ClaudeAgentBackend.available()
+    return [CheckResult("Claude Agent SDK", ok, note)]
+
+
+def check_browser(config: Config) -> list[CheckResult]:
+    """Playwright и его Chromium: нужны для поиска и управления браузером (не обязательны)."""
+    if not config.get("browser.enabled", True):
+        return []
+    if importlib.util.find_spec("playwright") is None:
+        return [CheckResult("браузер (Playwright)", False,
+                            "не установлен; pip install -r requirements.txt", required=False)]
+    channel = str(config.get("browser.channel", "chromium") or "")
+    if channel in ("msedge", "chrome"):
+        return [CheckResult("браузер (Playwright)", True, f"используется установленный {channel}",
+                            required=False)]
+    import os
+    from pathlib import Path
+    roots = [config.root / ".playwright", Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "") or "~"),
+             Path.home() / ".cache" / "ms-playwright",
+             Path(os.environ.get("LOCALAPPDATA", "~")) / "ms-playwright"]
+    found = any(r.expanduser().is_dir() and any(r.expanduser().glob("chromium-*")) for r in roots)
+    return [CheckResult("браузер (Playwright)", found,
+                        "Chromium для Playwright найден" if found else
+                        "Chromium не скачан; выполните: python -m playwright install chromium",
+                        required=False)]
 
 
 def check_vosk_model(config: Config) -> CheckResult:
@@ -156,7 +190,8 @@ def check_silero(config: Config) -> list[CheckResult]:
 
 
 def run_all(config: Config, voice: bool = True) -> list[CheckResult]:
-    results = [check_python(), *check_packages(voice, config), *check_ollama(config)]
+    results = [check_python(), *check_packages(voice, config), *check_ollama(config),
+               *check_claude(config), *check_browser(config)]
     if voice:
         results += [check_vosk_model(config), check_whisper_model(config), check_gpu(),
                     check_microphone(config)]

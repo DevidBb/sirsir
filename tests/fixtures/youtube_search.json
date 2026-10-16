@@ -1,0 +1,183 @@
+{
+ "twoColumnSearchResultsRenderer": {
+  "primaryContents": {
+   "sectionListRenderer": {
+    "contents": [
+     {
+      "itemSectionRenderer": {
+       "contents": [
+        {
+         "videoRenderer": {
+          "videoId": "XvbVePuP7NY",
+          "title": {
+           "runs": [
+            {
+             "text": "my local, AI Voice Assistant (I replaced Alexa!!)"
+            }
+           ]
+          },
+          "ownerText": {
+           "runs": [
+            {
+             "text": "NetworkChuck"
+            }
+           ]
+          },
+          "viewCountText": {
+           "simpleText": "1 610 151 просмотр"
+          },
+          "publishedTimeText": {
+           "simpleText": "1 г. назад"
+          },
+          "lengthText": {
+           "simpleText": "39:41"
+          },
+          "detailedMetadataSnippets": [
+           {
+            "snippetText": {
+             "runs": [
+              {
+               "text": "Scam Copilot is available for new users of Bitdefender Premium Security and superior plans. Find out more here: ..."
+              }
+             ]
+            }
+           }
+          ]
+         }
+        },
+        {
+         "reelShelfRenderer": {
+          "items": [
+           {
+            "shortsLockupViewModel": {
+             "entityId": "x"
+            }
+           }
+          ]
+         }
+        },
+        {
+         "videoRenderer": {
+          "videoId": "x2k-UTsfAeA",
+          "title": {
+           "runs": [
+            {
+             "text": "Полностью локальный голосовой ИИ-помощник"
+            }
+           ]
+          },
+          "ownerText": {
+           "runs": [
+            {
+             "text": "Programmer Network"
+            }
+           ]
+          },
+          "viewCountText": {
+           "simpleText": "4 693 просмотра"
+          },
+          "publishedTimeText": {
+           "simpleText": "2 мес. назад"
+          },
+          "lengthText": {
+           "simpleText": "12:48"
+          },
+          "detailedMetadataSnippets": [
+           {
+            "snippetText": {
+             "runs": [
+              {
+               "text": "Полностью локальная настройка голосового ИИ на мини-ПК десятилетней давности. Faster Whisper для преобразования речи в текст ..."
+              }
+             ]
+            }
+           }
+          ]
+         }
+        },
+        {
+         "videoRenderer": {
+          "videoId": "XvbVePuP7NY",
+          "title": {
+           "runs": [
+            {
+             "text": "my local, AI Voice Assistant (I replaced Alexa!!)"
+            }
+           ]
+          },
+          "ownerText": {
+           "runs": [
+            {
+             "text": "NetworkChuck"
+            }
+           ]
+          },
+          "viewCountText": {
+           "simpleText": "1 610 151 просмотр"
+          },
+          "publishedTimeText": {
+           "simpleText": "1 г. назад"
+          },
+          "lengthText": {
+           "simpleText": "39:41"
+          },
+          "detailedMetadataSnippets": [
+           {
+            "snippetText": {
+             "runs": [
+              {
+               "text": "Scam Copilot is available for new users of Bitdefender Premium Security and superior plans. Find out more here: ..."
+              }
+             ]
+            }
+           }
+          ]
+         }
+        },
+        {
+         "videoRenderer": {
+          "videoId": "78JFdQd04Kg",
+          "title": {
+           "runs": [
+            {
+             "text": "Настройте полностью локальный голосовой агент на базе искусственного интеллекта за 10 минут! | (L..."
+            }
+           ]
+          },
+          "ownerText": {
+           "runs": [
+            {
+             "text": "Thanh-y David Nguyen"
+            }
+           ]
+          },
+          "viewCountText": {
+           "simpleText": "51 574 просмотра"
+          },
+          "publishedTimeText": {
+           "simpleText": "10 мес. назад"
+          },
+          "lengthText": {
+           "simpleText": "9:40"
+          },
+          "detailedMetadataSnippets": [
+           {
+            "snippetText": {
+             "runs": [
+              {
+               "text": "В этом видео я покажу вам, как развернуть полностью приватного, полностью локального голосового ИИ-агента, используя LiveKit ..."
+              }
+             ]
+            }
+           }
+          ]
+         }
+        }
+       ]
+      }
+     }
+    ]
+   }
+  }
+ }
+}

@@ -1,0 +1,47 @@
+# Проверка на Linux (как Kali): тесты, настоящий Chromium, сервер HUD, Claude Agent SDK (без сети).
+name: Linux
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "jarvis/**"
+      - "scripts/**"
+      - "tests/**"
+      - "*.sh"
+      - "requirements*.txt"
+      - "config.toml"
+      - ".github/workflows/linux.yml"
+
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Системные библиотеки (PortAudio для sounddevice)
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2
+      - name: Зависимости
+        run: pip install -r requirements.txt -r requirements-dev.txt -r requirements-claude.txt
+      - name: Chromium для Playwright
+        run: python -m playwright install --with-deps chromium
+      - name: Тесты
+        run: python -m pytest -q -rs
+      - name: Статический анализ
+        run: python -m pyflakes jarvis scripts tests
+      - name: Сервер HUD поднимается и отвечает
+        run: |
+          python -m jarvis --web --no-open --skip-check &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8765/api/status >/dev/null && break; sleep 1; done
+          curl -sf http://127.0.0.1:8765/ | grep -q "J.A.R.V.I.S."
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Origin: http://evil.example' http://127.0.0.1:8765/api/status)" = 403
+          kill %1

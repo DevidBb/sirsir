@@ -44,3 +44,26 @@ class Config:
         """Путь из конфига; относительные пути — от каталога config.toml."""
         p = Path(str(self.get(dotted))).expanduser()
         return p if p.is_absolute() else self.root / p
+
+
+def load_dotenv(path: Path) -> list[str]:
+    """Переменные из .env (KEY=VALUE) без сторонних пакетов; окружение имеет приоритет.
+
+    Возвращает только имена загруженных переменных — значения нигде не печатаются.
+    """
+    import os
+    loaded = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return loaded
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip().strip('"').strip("'")
+        if key and value and key not in os.environ:
+            os.environ[key] = value
+            loaded.append(key)
+    return loaded

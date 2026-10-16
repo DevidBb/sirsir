@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .security import looks_secret
 from .tool_registry import Param, Tool, ToolRegistry
 
 SCHEMA = """
@@ -95,7 +96,7 @@ class Memory:
     # --- факты ---
     def add_fact(self, text: str) -> bool:
         text = " ".join(text.split())[:300]
-        if not text:
+        if not text or looks_secret(text):
             return False
         with self._lock:
             cur = self._db.execute("INSERT OR IGNORE INTO facts(text, created_at) VALUES(?, ?)",
@@ -112,6 +113,19 @@ class Memory:
                                     (limit,)).fetchall()
         return [r[0] for r in reversed(rows)]
 
+    def list_facts(self) -> list[dict[str, Any]]:
+        rows = self.execute("SELECT id, text, created_at FROM facts ORDER BY id DESC")
+        return [{"id": r[0], "text": r[1], "created_at": r[2]} for r in rows]
+
+    def update_fact(self, fact_id: int, text: str) -> bool:
+        text = " ".join(text.split())[:300]
+        if not text or looks_secret(text):
+            return False
+        return self.modify("UPDATE facts SET text = ? WHERE id = ?", (text, int(fact_id))) > 0
+
+    def delete_fact(self, fact_id: int) -> bool:
+        return self.modify("DELETE FROM facts WHERE id = ?", (int(fact_id),)) > 0
+
     def forget_fact(self, fragment: str) -> int:
         with self._lock:
             cur = self._db.execute("DELETE FROM facts WHERE text LIKE ?", (f"%{fragment}%",))
@@ -127,6 +141,8 @@ class Memory:
     # --- инструменты для LLM ---
     def register_tools(self, registry: ToolRegistry, on_setting_changed=None) -> None:
         def remember(fact: str) -> str:
+            if looks_secret(fact):
+                return "Пароли, токены и ключи я в память не записываю — храните их в менеджере паролей."
             return "Запомнил." if self.add_fact(fact) else "Это я уже помню."
 
         def forget(fragment: str) -> str:

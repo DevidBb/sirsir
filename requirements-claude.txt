@@ -1,0 +1,5 @@
+# Необязательно: модель Claude через официальный Claude Agent SDK (облако Anthropic).
+# Пакет включает Claude Code CLI (~250 МБ). Нужен вход: «claude login» (подписка Claude)
+# или переменная окружения ANTHROPIC_API_KEY. Затем в config.toml: [llm] provider = "claude"
+# или переключите модель в HUD: Настройки → Модель.
+claude-agent-sdk>=0.2

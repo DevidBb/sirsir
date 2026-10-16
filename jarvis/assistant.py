@@ -82,6 +82,17 @@ COMPOSITE_RE = re.compile(
     re.I | re.S)
 TYPE_AFTER_RE = re.compile(r"^(?:напиши|напечатай|набери|введи|впиши)\s+(?!в\s)(?P<t>\S.*)$",
                            re.I | re.S)
+# Признаки многошаговой задачи: такой «поиск» отдаём модели, а не быстрой команде.
+COMPLEX_RE = re.compile(
+    r"\b(?:сравн|сопостав|проанализ|анализ|вывод|резюм|итог|объясн|прочита|прочти|изуч|выбер|"
+    r"расскаж|перескаж|составь|напиши|оцени|проверь|открой|зайди|потом|затем|после этого|"
+    r"compare|summar|analy|conclu|explain|read|review|then|after that)\w*", re.I)
+
+
+def is_complex_request(query: str) -> bool:
+    return bool(COMPLEX_RE.search(query)) or len(query.split()) > 14
+
+
 LEAD_WORDS_RE = re.compile(r"^\s*(?:(?:привет|здравствуй|слушай|эй|окей|ок|джарвис)[\s,!.]+)+",
                            re.I)
 
@@ -105,6 +116,8 @@ class Reply:
     expect_followup: bool = True
     # Ответ уже озвучен по предложениям во время генерации (потоковый режим).
     spoken: bool = False
+    # Структурированные данные последнего инструмента (результаты поиска и т.п.) для интерфейса.
+    data: dict | None = None
 
 
 class Assistant:
@@ -130,6 +143,10 @@ class Assistant:
         self.dictation = dictation or Dictation()
         self._pending_choice: tuple[Choice, float] | None = None
         self.clock = time.monotonic
+        # Наблюдатель событий (интерфейс): {"type": "tool_start" | "tool_end" | ...}.
+        self.on_event: Callable[[dict], None] = lambda event: None
+        # Внешний агент (Claude Agent SDK) вместо цикла Ollama, см. providers.py.
+        self.agent_backend: Any = None
         self.intents = IntentMatcher(config.get("windows.apps", {}),
                                      config.get("windows.websites", {}),
                                      config.get("windows.folders", {}),
@@ -169,7 +186,8 @@ class Assistant:
                 self.conversation.begin_turn(text)
                 self.conversation.add({"role": "assistant", "content": answer})
                 self.conversation.end_turn()
-                return Reply(answer)
+                self.emit({"type": "confirm_resolved", "status": status})
+                return Reply(answer, data=getattr(result, "data", None))
             # просрочено — обрабатываем как обычную реплику
 
         if self._pending_choice is not None:
@@ -199,12 +217,36 @@ class Assistant:
         if quick is not None:
             return quick
 
+        if self.agent_backend is not None:
+            return self.agent_backend.run(self, text, on_sentence)
         return self._ask_llm(text, on_sentence)
+
+    def emit(self, event: dict) -> None:
+        try:
+            self.on_event(event)
+        except Exception:  # интерфейс не должен ронять обработку команды
+            log.exception("Ошибка обработчика событий")
+
+    def _route_intent(self, intent: Intent) -> Intent:
+        """Поиск на YouTube и в интернете — настоящими результатами, если есть браузер."""
+        if intent.tool != "web_search":
+            return intent
+        names = self.registry.names()
+        site = intent.args.get("site", "default")
+        if is_complex_request(intent.args.get("query", "")):
+            return Intent("_llm")  # «найди …, сравни и дай вывод» — план из нескольких шагов
+        if site == "youtube" and "youtube_search" in names:
+            return Intent("youtube_search", {"query": intent.args["query"]})
+        if site in ("default", "google") and "internet_search" in names:
+            return Intent("internet_search", {"query": intent.args["query"]})
+        return intent
 
     def _quick_intent(self, text: str) -> Reply | None:
         intent = self.intents.match(text)
         if intent is not None and intent.tool in INPUT_INTENTS:
             return self._input_intent(text, intent)
+        if intent is not None:
+            intent = self._route_intent(intent)
         if intent is None or intent.tool not in self.registry.names():
             return None
         outcome = self._run_tool(intent.tool, intent.args)
@@ -214,7 +256,7 @@ class Assistant:
         self.conversation.begin_turn(text)
         self.conversation.add({"role": "assistant", "content": outcome})
         self.conversation.end_turn()
-        return Reply(outcome)
+        return Reply(outcome, data=getattr(outcome, "data", None))
 
     def _composite(self, text: str) -> Reply | None:
         """«Открой X и сделай Y»: открыть, дождаться окна программы, выполнить вторую часть."""
@@ -477,25 +519,38 @@ class Assistant:
         try:
             tool, clean = self.registry.validate(name, args)
         except ToolError as e:
-            log.warning("Отклонён вызов %s(%s): %s", name, args, e)
+            log.warning("Отклонён вызов %s: %s", name, e)
+            self.emit({"type": "tool_end", "name": name, "ok": False, "text": f"Ошибка: {e}"})
             return f"Ошибка: {e}"
+        if self.emergency.active:
+            return "Остановлено пользователем, действие не выполнено."
         if not self.guard.allow_action():
             return "Ошибка: слишком много действий за минуту, действие заблокировано."
+        shown = self.registry.loggable(tool, clean)
+        logged = json.dumps(shown, ensure_ascii=False)
 
         def execute() -> str:
+            self.emit({"type": "tool_start", "name": name, "args": shown})
+            ok = True
             try:
                 result = tool.handler(**clean)
             except Exception as e:  # действие не должно ронять помощника
                 log.exception("Ошибка инструмента %s", name)
-                result = f"Не удалось выполнить действие: {e}"
+                result, ok = f"Не удалось выполнить действие: {e}", False
             if not isinstance(result, str):  # None или число от обработчика не должны ронять ответ
                 result = "Готово." if result is None else str(result)
-            audit.info("%s %s -> %s", name, json.dumps(clean, ensure_ascii=False), result[:200])
+            ok = ok and getattr(result, "ok", True)
+            audit.info("%s %s -> %s", name, logged, result[:200])
+            self.emit({"type": "tool_end", "name": name, "ok": ok, "text": result[:500],
+                       "data": getattr(result, "data", None)})
             if isinstance(result, Choice):  # переспросим: следующая реплика — выбор
                 self._pending_choice = (result, self.clock())
             return result
 
-        if tool.dangerous:
-            audit.info("%s %s -> ожидает подтверждения", name, json.dumps(clean, ensure_ascii=False))
-            return Reply(self.confirmations.request(self.registry.confirm_text(tool, clean), execute))
+        reason = self.registry.needs_confirmation(tool, clean)
+        if reason:
+            audit.info("%s %s -> ожидает подтверждения", name, logged)
+            question = self.confirmations.request(reason, execute)
+            self.emit({"type": "confirm", "name": name, "text": question, "action": reason})
+            return Reply(question)
         return execute()
