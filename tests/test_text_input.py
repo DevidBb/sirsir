@@ -274,7 +274,7 @@ def test_hybrid_prompt_uses_claude_without_tools_and_targets_chatgpt(config):
 
     a = make(config, [text("Эта локальная генерация не должна вызываться.")])
     a.config.set("llm.provider", "hybrid")
-    a.windows._titles.append("ChatGPT — Google Chrome")
+    a.windows._titles = list(a.windows._titles) + ["ChatGPT — Google Chrome"]
 
     class FakeClaude:
         def __init__(self):
