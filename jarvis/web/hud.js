@@ -485,10 +485,15 @@
       const r = document.createElement("input"); r.type = "radio"; r.name = "prov"; r.checked = s.provider.active === key;
       r.onchange = async () => { await api("/api/settings", { method: "POST", body: JSON.stringify({ provider: key }) }); refreshStatus(); };
       const t = document.createElement("div");
-      const extra = key === "claude" ? (s.provider.claude.available ? ` Модель: ${s.provider.claude.model || "по умолчанию"}.` : ` Недоступно: ${s.provider.claude.note}.`)
-        : ` Модель: ${s.provider.ollama.model}.` + (s.ollama_ready === false ? " Ollama не отвечает или модель не скачана." : "");
+      const extra = key === "claude"
+        ? (s.provider.claude.available ? ` Модель: ${s.provider.claude.model || "по умолчанию"}. ${s.provider.claude.note}.` : ` Недоступно: ${s.provider.claude.note}.`)
+        : key === "hybrid"
+          ? ` Короткие вопросы: Ollama (${s.provider.ollama.model}); сложные и актуальные: Claude. ` +
+            (s.provider.claude.available ? s.provider.claude.note + "." : `Claude недоступен: ${s.provider.claude.note}. Все ответы останутся локальными.`) +
+            (s.ollama_ready === false ? " Ollama не отвечает или модель не скачана." : "")
+          : ` Модель: ${s.provider.ollama.model}.` + (s.ollama_ready === false ? " Ollama не отвечает или модель не скачана." : "");
       t.innerHTML = `<div><b></b></div><div class="pnote"></div>`;
-      t.querySelector("b").textContent = key === "claude" ? "Claude (Agent SDK)" : "Ollama";
+      t.querySelector("b").textContent = key === "claude" ? "Claude (Agent SDK)" : key === "hybrid" ? "Гибрид (Ollama + Claude)" : "Ollama";
       t.querySelector(".pnote").textContent = note + "." + extra;
       d.append(r, t); pv.appendChild(d);
     });
