@@ -18,6 +18,8 @@
   const bubbles = new Map();   // task -> {el, text}
   const toolRows = [];         // незавершённые шаги
   let speaking = false;
+  // Локальный голос на стороне сервера (python -m jarvis --web --voice): Vosk/Whisper/Silero.
+  let serverVoice = { enabled: false, muted: false, mic: null };
 
   // ---------- соединение ----------
   function connect() {
@@ -43,11 +45,13 @@
       case "hello":
         setState(ev.state || "idle");
         setProvider(ev.provider);
+        applyVoice(ev.voice);
         (ev.history || []).slice(-60).forEach(h => { if (h.type !== "state") timelineEvent(h, true); });
         break;
       case "state": setState(ev.state, ev.detail); break;
+      case "voice": applyVoice(ev); break;
       case "task":
-        addUser(ev.text);
+        addUser(ev.text, ev.source === "voice");
         timelineAdd("task", ev.text, "", "task");
         hideConfirm();
         break;
@@ -79,10 +83,10 @@
 
   // ---------- чат ----------
   function scrollChat() { const c = $("chat"); c.scrollTop = c.scrollHeight; }
-  function addUser(text) {
+  function addUser(text, byVoice) {
     const el = document.createElement("div");
     el.className = "msg user";
-    el.innerHTML = `<div class="who">Вы</div><div class="body"></div>`;
+    el.innerHTML = `<div class="who">${byVoice ? "Вы · голос" : "Вы"}</div><div class="body"></div>`;
     el.querySelector(".body").textContent = text;
     $("chat").appendChild(el); scrollChat();
   }
@@ -232,6 +236,22 @@
   // (облако); Firefox его не поддерживает. Локальное распознавание — режим run.bat / python -m jarvis.
   const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
   let rec = null, listening = false;
+  function applyVoice(v) {
+    if (!v) return;
+    serverVoice = v;
+    $("listenBtn").hidden = !v.enabled;
+    if (v.enabled) {
+      $("micBtn").disabled = false;
+      $("micBtn").setAttribute("aria-pressed", v.muted ? "false" : "true");
+      $("micBtn").title = v.muted ? "Включить микрофон" : "Выключить микрофон";
+      $("micHint").textContent = v.muted ? "Локальный микрофон выключен." :
+        `Микрофон: ${v.mic || "по умолчанию"} — скажите «Джарвис» или нажмите «Слушать». Звук обрабатывается на этом компьютере.`;
+    } else if (v.error) {
+      $("micHint").textContent = "Локальный голос недоступен: " + v.error;
+    }
+  }
+  $("listenBtn").onclick = () => { stopSpeech(); send({ type: "listen" }); };
+
   if (!Rec) {
     $("micBtn").disabled = true;
     $("micHint").textContent = "Голосовой ввод в этом браузере недоступен (локальный голос — режим python -m jarvis).";
@@ -254,6 +274,7 @@
     if (rec) $("micHint").textContent = listening ? "Слушаю… (звук уходит в сервис распознавания браузера)" : "Микрофон выключен.";
   }
   $("micBtn").onclick = () => {
+    if (serverVoice.enabled) { send({ type: "mic", on: serverVoice.muted }); return; }
     if (!rec) return;
     if (listening) { rec.stop(); listening = false; }
     else { stopSpeech(); rec.lang = /[a-z]/i.test($("input").value) ? "en-US" : "ru-RU"; rec.start(); listening = true; }
@@ -273,7 +294,7 @@
     speechSynthesis.cancel(); speechSynthesis.speak(u);
   }
   function stopSpeech() { if (window.speechSynthesis) speechSynthesis.cancel(); if (speaking) { speaking = false; setState("idle"); } }
-  $("shutUpBtn").onclick = stopSpeech;
+  $("shutUpBtn").onclick = () => { if (serverVoice.enabled) send({ type: "shut_up" }); stopSpeech(); };
 
   // ---------- вкладки ----------
   document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
@@ -373,7 +394,10 @@
     const b = s.browser;
     row(!b.last_error, true, `Браузер Джарвиса: ${b.running ? "запущен" : "не запущен (откроется при первой команде)"}` + (b.url ? ` · ${b.url}` : "") + (b.last_error ? ` · последняя ошибка: ${b.last_error}` : "") + ` · профиль: ${b.profile || "—"}`);
     s.checks.forEach(c => row(c.ok, !c.required, `${c.name}: ${c.detail}`));
-    row(true, false, `Голос в HUD: ${Rec ? "распознавание браузера (облако Google)" : "недоступно в этом браузере"}; озвучивание: ${window.speechSynthesis ? "голоса системы" : "нет"}`);
+    const v = s.voice || {};
+    row(v.enabled, !v.error, v.enabled ? `Локальный голос: включён, микрофон ${v.mic || "по умолчанию"}${v.muted ? " (выключен)" : ""}`
+      : `Локальный голос: ${v.error ? "ошибка — " + v.error : "не запущен (run_web.bat или --web --voice)"}`);
+    row(true, false, `Микрофон браузера: ${Rec ? "распознавание браузера (облако Google)" : "недоступно в этом браузере"}; озвучивание: ${window.speechSynthesis ? "голоса системы" : "нет"}`);
   }
   $("diagRefresh").onclick = refreshStatus;
 

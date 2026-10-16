@@ -69,6 +69,8 @@ class Runtime:
         self.inbox: queue.Queue[tuple[str, Any] | None] = queue.Queue()
         self.task_id = 0
         app.assistant.on_event = self._on_assistant_event
+        app.observer = self._on_voice_event
+        self.voice_task: int | None = None
         self._thread = threading.Thread(target=self._worker, name="assistant", daemon=True)
         self._thread.start()
 
@@ -85,6 +87,46 @@ class Runtime:
             self.set_state(THINKING)
             return
         self.hub.publish(event)
+
+    # --- локальный голос (голосовой цикл App в своём потоке) ---
+    VOICE_STATES = {"idle": IDLE, "listening": "listening", "speaking": "speaking",
+                    "muted": IDLE, "off": IDLE}
+
+    def _on_voice_event(self, event: dict) -> None:
+        kind = event["type"]
+        if kind == "voice_state":
+            state = event["state"]
+            if self.voice_task is None or state in ("listening", "speaking"):
+                detail = {"idle": "жду «Джарвис»", "muted": "микрофон выключен"}.get(state, "")
+                self.set_state(self.VOICE_STATES.get(state, IDLE), detail)
+            self.hub.publish({"type": "voice", **self.app.voice_status()})
+        elif kind == "voice_heard":
+            self.task_id += 1
+            self.voice_task = self.task_id
+            self.hub.publish({"type": "task", "task": self.task_id, "text": event["text"],
+                              "source": "voice"})
+            self.set_state(THINKING)
+        elif kind == "voice_reply":
+            task = self.voice_task if self.voice_task is not None else self.task_id
+            self.voice_task = None
+            self._publish_reply(task, event.get("reply"))
+        else:
+            self.hub.publish(event)
+
+    def voice_command(self, kind: str, value: Any = None) -> None:
+        app = self.app
+        if not app.voice_active:
+            self.hub.publish({"type": "notice", "text": "Локальный голос не запущен "
+                              "(запустите run_web.bat или python -m jarvis --web --voice)."})
+            return
+        if kind == "mic":
+            app.set_mic(bool(value))
+        elif kind == "listen":
+            app.listen_now()
+        elif kind == "shut_up":
+            app.barged_in = True
+            app.speaker.interrupt()
+        self.hub.publish({"type": "voice", **app.voice_status()})
 
     def submit(self, text: str) -> int:
         self.task_id += 1
@@ -106,7 +148,10 @@ class Runtime:
                 dropped += 1
             except queue.Empty:
                 break
-        self.app.assistant.emergency_stop()
+        if self.app.voice_active:
+            self.app.emergency_stop()  # ещё и обрывает речь
+        else:
+            self.app.assistant.emergency_stop()
         self.hub.publish({"type": "cancelled", "task": self.task_id, "dropped": dropped})
 
     def stop(self) -> None:
@@ -144,7 +189,8 @@ class Runtime:
                 self.hub.publish({"type": "delta", "task": task, "text": sentence + " "})
             return not assistant.emergency.active
 
-        reply = assistant.handle(text, on_sentence=on_sentence)
+        with self.app.handle_lock:  # голосовая команда в это время ждёт
+            reply = assistant.handle(text, on_sentence=on_sentence)
         self.current = None
         self._publish_reply(task, reply)
         if reply is not None and reply.action == EXIT:
@@ -153,7 +199,8 @@ class Runtime:
 
     def _handle_tool(self, task: int, name: str, args: dict) -> None:
         self.set_state(ACTING, name)
-        outcome = self.app.assistant._run_tool(name, args)
+        with self.app.handle_lock:
+            outcome = self.app.assistant._run_tool(name, args)
         reply = outcome if isinstance(outcome, Reply) else Reply(str(outcome),
                                                                  data=getattr(outcome, "data", None))
         self._publish_reply(task, reply)
@@ -178,7 +225,7 @@ class Runtime:
         except Exception:  # noqa: BLE001
             llm_ok = False
         return {
-            "state": self.state, "current": self.current,
+            "state": self.state, "current": self.current, "voice": app.voice_status(),
             "provider": provider_status(app.config), "ollama_ready": llm_ok,
             "browser": app.browser.status() if app.browser else {"running": False,
                                                                  "last_error": "Playwright не установлен"},
@@ -303,7 +350,8 @@ def create_app(runtime: Runtime, port: int):
             hub.clients.add(q)
             history = list(hub.history)
         await ws.send_json({"type": "hello", "state": runtime.state, "history": history,
-                            "provider": app_core.config.get("llm.provider", "ollama")})
+                            "provider": app_core.config.get("llm.provider", "ollama"),
+                            "voice": app_core.voice_status()})
 
         async def sender():
             while True:
@@ -322,6 +370,8 @@ def create_app(runtime: Runtime, port: int):
                               if msg.get("answer") else
                               app_core.config.get("security.cancel_phrases", ["отмена"])[0])
                     runtime.submit(phrase)
+                elif kind in ("mic", "listen", "shut_up"):
+                    runtime.voice_command(kind, msg.get("on"))
                 elif kind == "tool":
                     try:
                         runtime.call_tool(str(msg.get("name")), dict(msg.get("args") or {}))
@@ -365,7 +415,31 @@ def _tail_actions(config: Config, limit: int = 60) -> list[str]:
     return lines[-limit:][::-1]
 
 
-def run(config: Config, app_factory, open_browser: bool | None = None) -> int:
+def start_voice(core: Any, hub: Hub) -> None:
+    """Загрузка моделей речи и голосовой цикл в фоне; при ошибке HUD работает без голоса."""
+    def worker() -> None:
+        hub.publish({"type": "notice", "text": "Загружаю модели речи…"})
+        try:
+            parts = core.build_voice()
+        except Exception as e:  # noqa: BLE001 — нет моделей, микрофона, библиотек
+            log.exception("Голос не запущен")
+            if isinstance(e, ModuleNotFoundError):
+                core.voice_error = f"не установлен пакет {e.name} (pip install -r requirements.txt)"
+            else:
+                core.voice_error = str(e).splitlines()[0] if str(e) else type(e).__name__
+            hub.publish({"type": "notice", "text": f"Локальный голос недоступен: {core.voice_error}. "
+                                                    "Чат работает; подробности — «Диагностика»."})
+            core.reminders.start(lambda text: hub.publish({"type": "notice", "text": text,
+                                                           "reminder": True}))
+            return
+        hub.publish({"type": "notice", "text": f"Голос готов: скажите «Джарвис» или нажмите «Слушать». "
+                                                f"Микрофон: {parts.mic.name}. Звук обрабатывается "
+                                                f"на этом компьютере."})
+        core.run_voice(parts, console=False)
+    threading.Thread(target=worker, name="voice", daemon=True).start()
+
+
+def run(config: Config, app_factory, open_browser: bool | None = None, voice: bool = False) -> int:
     import uvicorn
     host = str(config.get("web.host", "127.0.0.1"))
     port = int(config.get("web.port", 8765))
@@ -376,7 +450,11 @@ def run(config: Config, app_factory, open_browser: bool | None = None) -> int:
     core = app_factory()
     hub = Hub()
     runtime = Runtime(core, hub)
-    core.reminders.start(lambda text: hub.publish({"type": "notice", "text": text, "reminder": True}))
+    if voice:
+        start_voice(core, hub)  # напоминания запустит голосовой цикл (или start_voice при ошибке)
+    else:
+        core.reminders.start(lambda text: hub.publish({"type": "notice", "text": text,
+                                                       "reminder": True}))
     web = create_app(runtime, port)
     url = f"http://127.0.0.1:{port}/"
     print(f"JARVIS HUD: {url}  (Ctrl+C — выход)")
@@ -387,5 +465,6 @@ def run(config: Config, app_factory, open_browser: bool | None = None) -> int:
         uvicorn.run(web, host=host, port=port, log_level="warning")
     finally:
         runtime.stop()
+        core.quit()
         core.close()
     return 0

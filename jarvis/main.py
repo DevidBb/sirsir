@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from . import calculator, checks, console_utf8
 from .assistant import EXIT, MUTE, STOP, Assistant, Reply
@@ -64,6 +64,12 @@ class App:
         # Будит голосовой цикл, когда нужно что-то сказать без «Джарвис».
         self.wake_interrupt = threading.Event()
         self.notifications: queue.Queue[str] = queue.Queue()
+        # HUD: наблюдатель голосовых событий и общий замок — голос и чат не обрабатываются одновременно.
+        self.observer: Callable[[dict], None] = lambda event: None
+        self.handle_lock = threading.RLock()
+        # «Слушать» из HUD: принять команду без фразы пробуждения.
+        self.force_listen = threading.Event()
+        self.voice_active = False
         self.memory = Memory(config.path("memory.db_path"), int(config.get("memory.max_facts", 200)))
         self._apply_saved_settings()
 
@@ -172,6 +178,7 @@ class App:
 
     # --- напоминания ---
     def _on_reminder(self, text: str) -> None:
+        self.observer({"type": "notice", "text": text, "reminder": True})
         if self.voice:
             self.notifications.put(text)
             self.wake_interrupt.set()
@@ -255,6 +262,7 @@ class App:
         parts = parts or self.build_voice()
         mic = parts.mic
         self.mic = mic
+        self.voice_active = True
         self.stop_detector = parts.stop_detector
         if console:
             self._start_console()
@@ -284,6 +292,8 @@ class App:
                         break
                     self.speaker.say("Произошла ошибка, продолжаю работу.")
         finally:
+            self.voice_active = False
+            self.observer({"type": "voice_state", "state": "off"})
             mic.stop()
             if self.tray:
                 self.tray.stop()
@@ -300,17 +310,24 @@ class App:
             return True
         self._state("idle")
         self.wake_interrupt.clear()
-        if not wake.wait(mic.blocks(self.wake_interrupt)):
+        if self.force_listen.is_set() or wake.wait(mic.blocks(self.wake_interrupt)):
+            heard_wake = not self.force_listen.is_set()
+        else:
             if self.stop_event.is_set():
                 return False
             if mic.error:
                 print(f"{mic.error}. Помощник остановлен.")
+                self.observer({"type": "notice", "text": f"Микрофон: {mic.error}. Голос остановлен."})
                 return False
             wake.reset()
-            return True  # разбудило напоминание
+            if not self.force_listen.is_set():
+                return True  # разбудило напоминание
+            heard_wake = False
+        self.force_listen.clear()
         # Короткий сигнал не сбрасывает очередь микрофона: если команда
         # сказана сразу после «Джарвис», она попадёт в запись целиком.
-        print("(слышу «Джарвис» — говорите команду)", flush=True)
+        print("(слышу «Джарвис» — говорите команду)" if heard_wake else "(слушаю — говорите команду)",
+              flush=True)
         if self.config.get("assistant.wake_feedback", "beep") == "voice":
             self._speak(mic, "Слушаю.")
         else:
@@ -325,6 +342,28 @@ class App:
     def _state(self, state: str) -> None:
         if self.tray:
             self.tray.set_state(state)
+        self.observer({"type": "voice_state", "state": state})
+
+    def listen_now(self) -> None:
+        """Кнопка «Слушать» в HUD: следующая фраза — команда, без «Джарвис»."""
+        if self.mic is not None and self.mic.muted:
+            self.mic.unmute()
+        self.force_listen.set()
+        self.wake_interrupt.set()
+
+    def set_mic(self, on: bool) -> None:
+        if self.mic is None:
+            return
+        if on and self.mic.muted:
+            self.toggle_mic()
+        elif not on and not self.mic.muted:
+            self.toggle_mic()
+        self.wake_interrupt.set()
+
+    def voice_status(self) -> dict[str, Any]:
+        return {"enabled": self.voice_active, "muted": bool(self.mic and self.mic.muted),
+                "mic": getattr(self.mic, "name", None) if self.mic else None,
+                "error": getattr(self, "voice_error", "")}
 
     def toggle_mic(self) -> None:
         if self.mic is None:
@@ -415,6 +454,7 @@ class App:
                     print("(речь не разобрал)", flush=True)
                 continue
             print(f"Вы: {text}", flush=True)
+            self.observer({"type": "voice_heard", "text": text})
             self.barged_in = False
 
             def speak_sentence(sentence: str) -> bool:
@@ -424,7 +464,9 @@ class App:
                 self._speak(mic, sentence)
                 return not self.barged_in
 
-            reply = self.assistant.handle(text, on_sentence=speak_sentence)
+            with self.handle_lock:
+                reply = self.assistant.handle(text, on_sentence=speak_sentence)
+            self.observer({"type": "voice_reply", "reply": reply})
             if reply is None:
                 continue
             if reply.action == STOP:
@@ -539,6 +581,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--web", action="store_true",
                         help="интерфейс HUD в браузере (http://127.0.0.1:8765)")
     parser.add_argument("--no-open", action="store_true", help="с --web: не открывать страницу HUD")
+    parser.add_argument("--voice", action="store_true",
+                        help="с --web: ещё и локальный голос (Vosk, Whisper, Silero) с показом в HUD")
     parser.add_argument("--check", action="store_true", help="только проверить компоненты")
     parser.add_argument("--skip-check", action="store_true", help="не проверять при запуске")
     parser.add_argument("--tray", action="store_true", help="значок в области уведомлений")
@@ -577,7 +621,7 @@ def main(argv: list[str] | None = None) -> int:
     # Настройки, сохранённые голосом и мастером микрофона (memory.db), — до проверок,
     # иначе проверка показывает микрофон по умолчанию, а не выбранный.
     apply_saved_settings(config)
-    voice = not (args.text or args.web)
+    voice = not args.text and (not args.web or args.voice)
     setup_logging(config, args.verbose)
     setup_audit_log(config)
     if args.setup_mic:
@@ -617,11 +661,12 @@ def main(argv: list[str] | None = None) -> int:
         from . import web_app
 
         def build() -> App:
-            core = App(config, voice=False)
+            core = App(config, voice=args.voice)
             if core.browser is not None:  # «открой ютуб» — в браузере Джарвиса, а не в системном
                 core.controller.open_url = core.browser.open_from_other_thread
             return core
-        return web_app.run(config, build, open_browser=False if args.no_open else None)
+        return web_app.run(config, build, open_browser=False if args.no_open else None,
+                           voice=args.voice)
     app = App(config, voice, tray=args.tray)
     try:
         app.run_voice() if voice else app.run_text()
