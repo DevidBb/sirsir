@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 PROVIDERS = {
+    "hybrid": "Гибрид — быстрые команды и простые вопросы локально; сложные задачи через Claude",
     "ollama": "Ollama — локальная модель, данные не покидают компьютер",
     "claude": "Claude (Agent SDK) — облако Anthropic, запросы уходят в интернет",
 }
@@ -215,7 +216,7 @@ class ClaudeAgentBackend:
                                   self.timeout + 30)
         except (asyncio.TimeoutError, concurrent.futures.TimeoutError, TimeoutError):
             self.last_error = "превышено время ответа"
-            return Reply(f"Задача не уложилась в {int(self.timeout)} с и остановлена.")
+            return Reply(f"Задача не уложилась в {int(self.timeout)} с и остановлена.", ok=False)
         except Exception as e:  # noqa: BLE001 — честная ошибка вместо падения
             if assistant.emergency.active:  # прервали по команде пользователя — это не сбой
                 return Reply("Остановлено.", STOP, expect_followup=False)
@@ -427,8 +428,14 @@ async def _with_image(text: str, image: tuple[str, str]):
 
 def make_agent_backend(config) -> ClaudeAgentBackend | None:
     provider = str(config.get("llm.provider", "ollama")).lower()
-    if provider != "claude":
+    if provider not in ("claude", "hybrid"):
         return None
+    if provider == "hybrid":
+        ok, note = ClaudeAgentBackend.available()
+        if not ok:
+            log.warning("Гибридный режим: Claude недоступен (%s); сложные запросы будут обработаны локальной Ollama",
+                        note)
+            return None
     return ClaudeAgentBackend(model=str(config.get("llm.claude.model", "") or ""),
                               max_turns=int(config.get("llm.claude.max_turns", 16)),
                               timeout=float(config.get("llm.claude.timeout_seconds", 240)),

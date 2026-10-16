@@ -53,9 +53,9 @@ if errorlevel 1 (
 echo.
 if "%AUTO%"=="1" goto ollama
 echo Естественный голос Silero: около 250 МБ - torch для CPU и модель 40 МБ.
-set SILERO=n
-set /p SILERO="Установить голос Silero? [y/N] "
-if /i not "%SILERO%"=="y" goto ollama
+set SILERO=y
+set /p SILERO="Установить голос Silero? [Y/n] "
+if /i "%SILERO%"=="n" goto ollama
 pip install -r requirements-silero.txt --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
 if errorlevel 1 set ERRORS=1
 python scripts\download_models.py --only-silero -y
@@ -66,12 +66,12 @@ echo.
 if "%AUTO%"=="1" goto ollama_check
 echo Модель Claude (облако Anthropic) для сложных задач: около 250 МБ, нужен вход "claude login"
 echo или ключ ANTHROPIC_API_KEY в файле .env. Без неё работает локальная Ollama.
-set CLAUDE=n
-set /p CLAUDE="Установить Claude Agent SDK? [y/N] "
-if /i not "%CLAUDE%"=="y" goto ollama_check
+set CLAUDE=y
+set /p CLAUDE="Установить Claude Agent SDK для гибридного режима? [Y/n] "
+if /i "%CLAUDE%"=="n" goto ollama_check
 pip install -r requirements-claude.txt
 if errorlevel 1 set ERRORS=1
-echo Выбрать Claude: в HUD Настройки - Модель - Claude.
+echo Выбрать гибридный режим: в HUD Настройки - Модель - Гибрид (Ollama + Claude).
 :ollama_check
 echo.
 where ollama >nul 2>nul

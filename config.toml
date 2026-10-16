@@ -34,7 +34,7 @@ sample_rate = 16000
 input_device = ""
 block_ms = 30
 # Определение конца речи (энергетический VAD с адаптивным порогом шума).
-silence_ms_to_stop = 900
+silence_ms_to_stop = 700
 max_command_seconds = 15
 no_speech_timeout_seconds = 6
 vad_energy_ratio = 3.0
@@ -68,11 +68,13 @@ preload = true
 # Если Ollama не запущена — запустить «ollama serve» автоматически.
 autostart_ollama = true
 max_tool_calls_per_turn = 3
-# Провайдер модели для сложных запросов (простые команды выполняются без модели):
-# "ollama" — локально (по умолчанию), "claude" — Claude Agent SDK, облако Anthropic
-# (нужен вход в Claude Code: «claude login», или ANTHROPIC_API_KEY в окружении).
-# Можно переключить в интерфейсе: Настройки → Модель.
-provider = "ollama"
+# Режим модели:
+# "hybrid" — быстрые команды локально; короткие вопросы к Ollama; сложные и актуальные запросы к Claude.
+# "ollama" — только локальная модель; "claude" — Claude Agent SDK для всех запросов, требующих LLM.
+# Для Claude нужна авторизация "claude login" или ANTHROPIC_API_KEY в окружении.
+# При отсутствии пакета Claude гибридный режим автоматически оставляет все ответы локальными.
+# Переключение: HUD → Настройки → Модель.
+provider = "hybrid"
 # Модель Ollama с поддержкой изображений для «посмотри на экран» (пусто — нет;
 # например "qwen2.5vl:7b", ~6 ГБ: ollama pull qwen2.5vl:7b). С провайдером claude не нужна.
 vision_model = ""
@@ -214,6 +216,11 @@ audit_log = "data/actions.log"
 "гитхаб" = "https://github.com"
 "википедия" = "https://ru.wikipedia.org"
 "почта" = "https://mail.google.com"
+"chatgpt" = "https://chatgpt.com"
+"чатгпт" = "https://chatgpt.com"
+"twitter" = "https://x.com"
+"твиттер" = "https://x.com"
+"икс" = "https://x.com"
 
 [windows.folders]
 # Папки, которые можно открыть голосом («открой загрузки»).

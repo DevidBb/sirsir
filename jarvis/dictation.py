@@ -210,11 +210,18 @@ class Dictation:
         return self._windows
 
     def find_window(self, query: str) -> str | None:
-        """Заголовок открытого окна, больше всего похожего на query («телеграм» → «Telegram»)."""
+        """Заголовок открытого окна по подстроке или нечёткому совпадению."""
         backend = self._window_backend()
         if not getattr(backend, "available", True):
             return None
-        scored = [(similarity(query, t), t) for t in backend.titles() if t.strip()]
+        titles = [t for t in backend.titles() if t.strip()]
+        normalized_query = normalize(query)
+        # Если название приложения — часть заголовка браузера («ChatGPT - Chrome»),
+        # сначала ищем точное вхождение. Это надёжнее нечёткого сравнения коротких имён.
+        contained = [t for t in titles if normalized_query and normalized_query in normalize(t)]
+        if contained:
+            return min(contained, key=lambda t: len(normalize(t)))
+        scored = [(similarity(query, t), t) for t in titles]
         scored = [x for x in scored if x[0] >= WINDOW_THRESHOLD]
         return max(scored)[1] if scored else None
 
@@ -236,7 +243,7 @@ class Dictation:
             self._sleep(step)
         return None
 
-    def type_into(self, window: str, text: str) -> str | None:
+    def type_into(self, window: str, text: str, voice_punctuation: bool = True) -> str | None:
         """«Напиши в телеграм привет»: переключиться на окно и напечатать.
         Название окна может быть из двух слов («google chrome …») — пробуем оба варианта."""
         words = text.split()
@@ -264,4 +271,4 @@ class Dictation:
             _cls, current = (self._foreground or _foreground_window)()
             if normalize(current) != normalize(title):
                 return f"Не получилось переключиться на окно {title}, печатать не стал."
-        return self.type_text(text)
+        return self.type_text(text, voice_punctuation=voice_punctuation)

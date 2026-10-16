@@ -274,3 +274,95 @@ def test_tool_returning_none_does_not_crash(config):
     a.registry.register(Tool("noop", "Ничего не делает", lambda: None))
     assert a.handle("сделай что-нибудь").text == "Сделал."
     assert a.fake.requests[1]["messages"][-1]["content"] == "Готово."
+
+
+
+def test_hybrid_routes_simple_questions_locally_and_current_tasks_to_claude(config):
+    from jarvis.assistant import Reply, is_complex_request
+
+    config.set("llm.provider", "hybrid")
+    a = build(config, [text("Локальный ответ.")])
+
+    class FakeClaude:
+        def __init__(self):
+            self.calls = []
+
+        def run(self, assistant, request, on_sentence=None):
+            self.calls.append(request)
+            return Reply("Ответ Claude.")
+
+    claude = FakeClaude()
+    a.agent_backend = claude
+
+    assert a._ask_model("привет").text == "Локальный ответ."
+    assert claude.calls == []
+
+    assert is_complex_request("Какая погода завтра в Таллинне?")
+    assert is_complex_request("What is tomorrow's weather in Tallinn?")
+    assert is_complex_request("продолжи с предыдущего шага")
+    assert a._ask_model("Какая погода завтра в Таллинне?").text == "Ответ Claude."
+    assert claude.calls == ["Какая погода завтра в Таллинне?"]
+
+    assert a._ask_model("Сравни два варианта и дай вывод.").text == "Ответ Claude."
+    assert claude.calls[-1] == "Сравни два варианта и дай вывод."
+
+
+
+def test_hybrid_keeps_quick_windows_commands_local(config):
+    from jarvis.assistant import Reply
+
+    config.set("llm.provider", "hybrid")
+    a = build(config, [])
+
+    class FakeClaude:
+        calls = []
+
+        def run(self, assistant, request, on_sentence=None):
+            self.calls.append(request)
+            return Reply("Ответ Claude.")
+
+    claude = FakeClaude()
+    a.agent_backend = claude
+    reply = a.handle("Открой блокнот")
+    assert reply.text == "Запускаю блокнот."
+    assert a.launched == ["notepad.exe"]
+    assert claude.calls == []
+    assert a.fake.requests == []
+
+
+
+def test_hybrid_provider_falls_back_when_claude_sdk_is_unavailable(config, monkeypatch):
+    from jarvis.providers import ClaudeAgentBackend, make_agent_backend
+
+    monkeypatch.setattr(ClaudeAgentBackend, "available", staticmethod(lambda: (False, "SDK missing")))
+    config.set("llm.provider", "hybrid")
+    assert make_agent_backend(config) is None
+
+
+def test_hybrid_provider_creates_claude_backend_when_sdk_is_available(config, monkeypatch):
+    from jarvis.providers import ClaudeAgentBackend, make_agent_backend
+
+    monkeypatch.setattr(ClaudeAgentBackend, "available", staticmethod(lambda: (True, "ready")))
+    config.set("llm.provider", "hybrid")
+    backend = make_agent_backend(config)
+    assert isinstance(backend, ClaudeAgentBackend)
+    backend.close()
+
+
+
+def test_hybrid_falls_back_to_local_model_when_claude_fails(config, caplog):
+    from jarvis.assistant import Reply
+
+    config.set("llm.provider", "hybrid")
+    a = build(config, [text("Локальный ответ о погоде.")])
+
+    class FailedClaude:
+        def run(self, assistant, request, on_sentence=None):
+            return Reply("Claude недоступен.", ok=False)
+
+    a.agent_backend = FailedClaude()
+    with caplog.at_level("WARNING"):
+        reply = a._ask_model("Какая погода завтра в Таллинне?")
+    assert reply.text == "Локальный ответ о погоде."
+    assert len(a.fake.requests) == 1
+    assert "локальную Ollama" in caplog.text

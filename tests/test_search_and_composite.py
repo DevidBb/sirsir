@@ -137,3 +137,20 @@ def test_first_part_failed_stops(config):
     a = build(config, desk)
     reply = a.handle("открой абракадабру и напиши привет")
     assert reply.text.startswith("Не нашёл") and a.typed == []
+
+
+
+def test_composite_chatgpt_prompt_is_pinned_to_chatgpt_window(config):
+    from jarvis.assistant import Reply
+
+    a = build(config, Desktop())
+    targets = []
+    a.dictation.foreground_title = lambda: "Untitled - Notepad"
+    a.dictation.wait_new_foreground = lambda before, timeout=8.0, step=0.25: "ChatGPT — Google Chrome"
+    a._quick_intent = lambda phrase: Reply("Открываю сайт ChatGPT.")
+    a._input_intent = lambda phrase, intent, target_window=None: (
+        targets.append(target_window), Reply("Текст подготовлен."))[1]
+
+    reply = a._composite("Открой ChatGPT и напиши промпт для создания сайта.")
+    assert reply is not None and "Текст подготовлен." in reply.text
+    assert targets == ["ChatGPT"]

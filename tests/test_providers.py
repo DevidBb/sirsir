@@ -134,8 +134,9 @@ def test_agent_cancel_stops_without_false_error(env):
     assert reply.text == "Остановлено." and reply.action == STOP
 
 
-def test_make_agent_backend_by_config(config):
-    assert make_agent_backend(config) is None  # по умолчанию — Ollama
+def test_make_agent_backend_by_config(config, monkeypatch):
+    config.set("llm.provider", "ollama")
+    assert make_agent_backend(config) is None
     config.set("llm.provider", "claude")
     config.set("llm.claude.model", "haiku")
     backend = make_agent_backend(config)
@@ -273,3 +274,15 @@ def test_warm_up_connects_without_query(env):
     FakeClient.script = [result("быстро")]
     assert assistant.handle("расскажи подробно что угодно").text == "быстро"
     assert len(FakeClient.seen_options) == 1  # первый ход использовал заранее запущенный клиент
+
+
+def test_hybrid_backend_falls_back_to_ollama_if_sdk_missing(config, monkeypatch):
+    monkeypatch.setattr(ClaudeAgentBackend, "available", staticmethod(lambda: (False, "not installed")))
+    config.set("llm.provider", "hybrid")
+    assert make_agent_backend(config) is None
+
+
+def test_hybrid_backend_uses_claude_when_sdk_is_available(config, monkeypatch):
+    monkeypatch.setattr(ClaudeAgentBackend, "available", staticmethod(lambda: (True, "ready")))
+    config.set("llm.provider", "hybrid")
+    assert isinstance(make_agent_backend(config), ClaudeAgentBackend)

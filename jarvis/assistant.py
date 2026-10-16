@@ -101,11 +101,29 @@ TYPE_AFTER_RE = re.compile(r"^(?:напиши|напечатай|набери|в
 COMPLEX_RE = re.compile(
     r"\b(?:сравн|сопостав|проанализ|анализ|вывод|резюм|итог|объясн|прочита|прочти|изуч|выбер|"
     r"расскаж|перескаж|составь|напиши|оцени|проверь|открой|зайди|потом|затем|после этого|"
-    r"compare|summar|analy|conclu|explain|read|review|then|after that)\w*", re.I)
+    r"погод|температур|градус|прогноз|новост|актуальн|текущ|последн|свеж|"
+    r"курс валют|сколько стоит|цена|цены|завтра|сегодняшн|сейчас|"
+    r"продолжи|продолжай|подробнее|выполни|дальше|теперь сделай|сделай это|на основе этого|"
+    r"compare|summar|analy|conclu|explain|read|review|then|after that|continue|next step|do that|"
+    r"weather|forecast|temperature|degrees|news|latest|current|tomorrow|today|price|currency|"
+    r"exchange rate|stock price|look up|research|sources|based on that|execute|run it)\w*", re.I)
+
+
+# Только настоящие многошаговые инструкции должны обходить быстрый поиск.
+MULTISTEP_RE = re.compile(
+    r"\b(?:сравн|сопостав|проанализ|анализ|вывод|резюм|итог|объясн|прочита|прочти|изуч|выбер|"
+    r"расскаж|перескаж|составь|оцени|проверь|compare|summar|analy|conclu|explain|read|review|"
+    r"then|after that|based on that|sources)\w*", re.I)
 
 
 def is_complex_request(query: str) -> bool:
+    """Запросу нужны свежие данные или более сильная модель."""
     return bool(COMPLEX_RE.search(query)) or len(query.split()) > 14
+
+
+def is_multistep_request(query: str) -> bool:
+    """Явный поиск можно выполнить сразу; анализ нескольких источников — через модель."""
+    return bool(MULTISTEP_RE.search(query)) or len(query.split()) > 14
 
 
 LEAD_WORDS_RE = re.compile(r"^\s*(?:(?:привет|здравствуй|слушай|эй|окей|ок|джарвис)[\s,!.]+)+",
@@ -257,8 +275,20 @@ class Assistant:
         return self._ask_model(text, on_sentence)
 
     def _ask_model(self, text: str, on_sentence: Callable[[str], bool] | None = None) -> Reply:
+        provider = str(self.config.get("llm.provider", "ollama")).lower()
         if self.agent_backend is not None:
-            return self.agent_backend.run(self, text, on_sentence)
+            # Гибрид: локальная Qwen отвечает на обычные короткие вопросы; Claude
+            # получает многошаговые задачи и запросы, где важна актуальная информация.
+            # Быстрые команды уже обработаны раньше в _quick_intent и сюда не попадают.
+            if provider != "hybrid" or is_complex_request(text):
+                reply = self.agent_backend.run(self, text, on_sentence)
+                if (provider == "hybrid" and not reply.ok and reply.action != STOP
+                        and not self.emergency.active):
+                    log.warning("Claude не выполнил задачу; переключаюсь на локальную Ollama.")
+                    self.emit({"type": "notice", "text": "Claude недоступен — пробую локальную модель Ollama."})
+                    return self._ask_llm(text, on_sentence)
+                return reply
+        # Если Claude SDK не установлен в режиме hybrid, локальная модель остаётся рабочей.
         return self._ask_llm(text, on_sentence)
 
     def run_unattended(self, prompt: str) -> Reply:
@@ -292,9 +322,11 @@ class Assistant:
         return [t for t in self.registry.tools() if t.name != "use_skill" and skill.allows(t.name)]
 
     def skill_prompt(self) -> str:
-        if self.skills is None:
-            return ""
-        return self.active_skill.prompt() if self.active_skill is not None else self.skills.catalog()
+        # Изолированные операции (например, сочинение промпта) могут задать
+        # active_skill даже без общего менеджера навыков.
+        if self.active_skill is not None:
+            return self.active_skill.prompt()
+        return self.skills.catalog() if self.skills is not None else ""
 
     def emit(self, event: dict) -> None:
         try:
@@ -302,13 +334,16 @@ class Assistant:
         except Exception:  # интерфейс не должен ронять обработку команды
             log.exception("Ошибка обработчика событий")
 
-    def _route_intent(self, intent: Intent) -> Intent:
-        """Поиск на YouTube и в интернете — настоящими результатами, если есть браузер."""
+    def _route_intent(self, intent: Intent, original_text: str = "") -> Intent:
+        """Поиск — сразу; запросы на сравнение/анализ — через модель."""
         if intent.tool != "web_search":
             return intent
         names = self.registry.names()
         site = intent.args.get("site", "default")
-        if is_complex_request(intent.args.get("query", "")):
+        # Парсер быстрого поиска может включить слова «сравни источники» в сам
+        # поисковый запрос. Проверяем и выделенный запрос, и исходную реплику.
+        if (is_multistep_request(intent.args.get("query", ""))
+                or is_multistep_request(original_text)):
             return Intent("_llm")  # «найди …, сравни и дай вывод» — план из нескольких шагов
         if site == "youtube" and "youtube_search" in names:
             return Intent("youtube_search", {"query": intent.args["query"]})
@@ -323,7 +358,7 @@ class Assistant:
         if intent is not None and intent.tool in INPUT_INTENTS:
             return self._input_intent(text, intent)
         if intent is not None:
-            intent = self._route_intent(intent)
+            intent = self._route_intent(intent, text)
         if intent is None or intent.tool not in self.registry.names():
             return None
         outcome = self._run_tool(intent.tool, intent.args)
@@ -358,7 +393,11 @@ class Assistant:
         if second_intent is not None and second_intent.tool == "compose_text":
             if self.dictation.wait_new_foreground(before) is None:
                 return Reply(first.text + " Не дождался окна программы, текст не вставлял.")
-            drafted = self._input_intent(second, second_intent)
+            target_window = None
+            if (first_intent.tool == "open_website"
+                    and first_intent.args.get("name") in ("chatgpt", "чатгпт")):
+                target_window = "ChatGPT"
+            drafted = self._input_intent(second, second_intent, target_window=target_window)
             return Reply(" ".join(x for x in (first.text, drafted.text) if x),
                          expect_followup=drafted.expect_followup, data=drafted.data, ok=drafted.ok)
         typed = TYPE_AFTER_RE.match(second)
@@ -373,7 +412,8 @@ class Assistant:
         return Reply(" ".join(x for x in (first.text, rest.text if rest else "") if x))
 
     # --- ввод текста и клавиш (LLM к этому доступа не имеет) ---
-    def _input_intent(self, text: str, intent: Intent) -> Reply:
+    def _input_intent(self, text: str, intent: Intent,
+                      target_window: str | None = None) -> Reply:
         if not self.guard.allow_action():
             return Reply("Слишком много действий за минуту, действие заблокировано.")
         args = intent.args
@@ -393,7 +433,7 @@ class Assistant:
             error = self.dictation.type_into(args["window"], args["text"])
             audit.info("type_in_window %s -> %s", args["window"], error or "ok")
             return Reply(error or "", expect_followup=False)
-        return self._compose(args["request"])
+        return self._compose(args["request"], target_window=target_window)
 
     # --- «посмотри на экран» (только по прямой просьбе пользователя) ---
     def _look_at_screen(self, question: str) -> Reply:
@@ -437,23 +477,64 @@ class Assistant:
         self.conversation.end_turn()
         return Reply(answer, data=data)
 
-    def _compose(self, request: str) -> Reply:
-        """LLM сочиняет текст; печатаем в активное окно только после «подтверждаю»."""
-        messages = [{"role": "system", "content": compose_system_prompt(request)},
-                    {"role": "user", "content": request}]
-        try:
-            message = self.llm.chat(messages, options={"num_predict": COMPOSE_MAX_TOKENS})
-        except LLMError as e:
-            log.error("LLM: %s", e)
-            return Reply("Языковая модель недоступна. Проверьте, что Ollama запущена.")
-        draft = (message.get("content") or "").strip().strip("«»\"' ")
+    def _compose(self, request: str, target_window: str | None = None) -> Reply:
+        """Сочинить текст; промпты делегируются Claude без инструментов, ввод — после подтверждения."""
+        system_prompt = compose_system_prompt(request)
+        draft: str | None = None
+        provider = str(self.config.get("llm.provider", "ollama")).lower()
+        use_claude = (
+            self.agent_backend is not None
+            and (provider == "claude" or (provider == "hybrid" and PROMPT_REQUEST_RE.search(request) is not None))
+        )
+        if use_claude:
+            # Изолированная копия Assistant и навык без разрешённых инструментов:
+            # Claude может написать текст, но не может открыть сайт/файл или нажать кнопку.
+            import copy
+
+            class ComposeOnlySkill:
+                name = "compose-text"
+                description = "Создание текста без действий в приложениях."
+                def prompt(self) -> str:
+                    return system_prompt + "\nИнструменты отключены. Выведи только готовый текст."
+                def allows(self, tool_name: str) -> bool:
+                    return False
+
+            isolated = copy.copy(self)
+            isolated.conversation = Conversation(self.conversation.max_turns)
+            isolated.active_skill = ComposeOnlySkill()
+            isolated.remember_task = lambda *args, **kwargs: None  # не засорять историю задач
+            try:
+                generated = self.agent_backend.run(isolated, request, None)
+                if generated.ok and generated.text.strip():
+                    draft = generated.text.strip()
+                else:
+                    log.warning("Claude не составил текст; пробую локальную Ollama: %s", generated.text)
+            except Exception:
+                log.exception("Не удалось составить текст через Claude; пробую локальную Ollama")
+            finally:
+                reset = getattr(self.agent_backend, "reset", None)
+                if callable(reset):
+                    reset()
+
+        if draft is None:
+            messages = [{"role": "system", "content": system_prompt},
+                        {"role": "user", "content": request}]
+            try:
+                message = self.llm.chat(messages, options={"num_predict": COMPOSE_MAX_TOKENS})
+            except LLMError as e:
+                log.error("LLM: %s", e)
+                return Reply("Языковая модель недоступна. Проверьте Ollama или авторизацию Claude.")
+            draft = (message.get("content") or "").strip().strip("«»\"' ")
         if not draft or looks_like_tool_text(draft):
             return Reply("Не получилось составить текст. Скажите иначе, пожалуйста.")
         words = draft.split()
         preview = " ".join(words[:PREVIEW_WORDS]) + ("…" if len(words) > PREVIEW_WORDS else "")
 
         def type_draft() -> str:
-            error = self.dictation.type_text(draft, voice_punctuation=False)
+            if target_window:
+                error = self.dictation.type_into(target_window, draft, voice_punctuation=False)
+            else:
+                error = self.dictation.type_text(draft, voice_punctuation=False)
             audit.info("compose_text: напечатано %d символов -> %s", len(draft), error or "ok")
             return error or "Напечатал."
 
@@ -462,8 +543,9 @@ class Assistant:
         self.conversation.begin_turn(request)
         self.conversation.add({"role": "assistant", "content": f"Составил текст: {draft}"})
         self.conversation.end_turn()
+        destination = f"в окне {target_window}" if target_window else "в активное окно"
         return Reply(f"Вот что получилось: {preview} " + self.confirmations.request(
-            "напечатать этот текст в активное окно", type_draft))
+            f"напечатать этот текст {destination}", type_draft))
 
     def _resolve_choice(self, text: str) -> Reply | None:
         """Ответ на «Нашёл несколько вариантов…». None — это не выбор, обычная реплика."""

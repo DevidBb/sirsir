@@ -240,7 +240,9 @@ class Runtime:
         app = self.app
         llm_ok = None
         try:
-            llm_ok = app.llm.has_model() if app.assistant.agent_backend is None else None
+            provider = str(app.config.get("llm.provider", "ollama")).lower()
+            # В гибридном режиме Ollama нужна для коротких вопросов, даже если Claude доступен.
+            llm_ok = app.llm.has_model() if app.assistant.agent_backend is None or provider == "hybrid" else None
         except Exception:  # noqa: BLE001
             llm_ok = False
         return {

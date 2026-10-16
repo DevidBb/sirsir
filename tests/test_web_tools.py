@@ -150,7 +150,7 @@ def test_complex_request_goes_to_model(setup):
 
 
 @pytest.mark.parametrize("query,complex_", [
-    ("видео про котиков", False), ("погода в москве", False),
+    ("видео про котиков", False), ("погода в москве", True),
     ("что такое mcp сравни источники", True), ("python asyncio and then summarize", True),
 ])
 def test_is_complex_request(query, complex_):

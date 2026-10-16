@@ -151,7 +151,7 @@ def test_switch_provider(server):
 def test_status_lists_tools_and_checks(server):
     client, _, _ = server
     s = client.get("/api/status").json()
-    assert s["state"] == "idle" and s["provider"]["active"] == "ollama"
+    assert s["state"] == "idle" and s["provider"]["active"] == "hybrid"
     assert any(t["name"] == "calculate" for t in s["tools"])
     assert any(c["name"] == "Python" for c in s["checks"])
     assert s["mcp"] == []  # в config.toml серверов нет
