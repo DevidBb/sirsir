@@ -328,3 +328,22 @@ def test_hybrid_keeps_quick_windows_commands_local(config):
     assert a.launched == ["notepad.exe"]
     assert claude.calls == []
     assert a.fake.requests == []
+
+
+
+def test_hybrid_provider_falls_back_when_claude_sdk_is_unavailable(config, monkeypatch):
+    from jarvis.providers import ClaudeAgentBackend, make_agent_backend
+
+    monkeypatch.setattr(ClaudeAgentBackend, "available", staticmethod(lambda: (False, "SDK missing")))
+    config.set("llm.provider", "hybrid")
+    assert make_agent_backend(config) is None
+
+
+def test_hybrid_provider_creates_claude_backend_when_sdk_is_available(config, monkeypatch):
+    from jarvis.providers import ClaudeAgentBackend, make_agent_backend
+
+    monkeypatch.setattr(ClaudeAgentBackend, "available", staticmethod(lambda: (True, "ready")))
+    config.set("llm.provider", "hybrid")
+    backend = make_agent_backend(config)
+    assert isinstance(backend, ClaudeAgentBackend)
+    backend.close()
