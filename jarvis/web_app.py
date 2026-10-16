@@ -133,6 +133,11 @@ class Runtime:
         self.inbox.put(("message", (self.task_id, text)))
         return self.task_id
 
+    def run_scheduled(self, schedule: Any) -> None:
+        """Плановая задача (из потока планировщика) — в общую очередь, как обычная команда."""
+        self.task_id += 1
+        self.inbox.put(("scheduled", (self.task_id, schedule)))
+
     def call_tool(self, name: str, args: dict) -> None:
         if name not in UI_TOOLS:
             raise PermissionError(f"Инструмент {name} нельзя вызвать из интерфейса")
@@ -166,6 +171,8 @@ class Runtime:
             try:
                 if kind == "message":
                     self._handle_message(*payload)
+                elif kind == "scheduled":
+                    self._handle_scheduled(*payload)
                 else:
                     self._handle_tool(*payload)
             except Exception as e:  # noqa: BLE001 — сообщаем, а не молча падаем
@@ -196,6 +203,17 @@ class Runtime:
         if reply is not None and reply.action == EXIT:
             self.hub.publish({"type": "notice", "text": "Команда завершения работы: закройте сервер "
                                                         "(Ctrl+C в терминале)."})
+
+    def _handle_scheduled(self, task: int, schedule: Any) -> None:
+        self.current = f"по расписанию: {schedule.prompt}"
+        self.hub.publish({"type": "task", "task": task, "text": f"⏰ {schedule.prompt}", "scheduled": True})
+        self.set_state(THINKING)
+        with self.app.handle_lock:
+            text = self.app.schedules.execute(schedule, self.app.assistant)
+        self.current = None
+        self.hub.publish({"type": "reply", "task": task, "ok": True, "text": text, "scheduled": True,
+                          "pending_confirmation": False})
+        self.hub.publish({"type": "notice", "text": f"Плановая задача №{schedule.id} выполнена: «{schedule.prompt}»."})
 
     def _handle_tool(self, task: int, name: str, args: dict) -> None:
         self.set_state(ACTING, name)
@@ -232,6 +250,7 @@ class Runtime:
             "tools": app.registry.describe(),
             "mcp": app.mcp.describe() if getattr(app, "mcp", None) else [],
             "skills": app.skills.describe(app.registry) if getattr(app, "skills", None) else [],
+            "schedules": app.schedules.describe() if getattr(app, "schedules", None) else [],
             "files": ({"roots": [str(r) for r in app.files.roots], "missing": app.files.missing}
                       if getattr(app, "files", None) else {"roots": [], "missing": []}),
             "checks": [{"name": r.name, "ok": r.ok, "detail": r.detail, "required": r.required}
@@ -353,6 +372,46 @@ def create_app(runtime: Runtime, port: int):
                 library.reload()
         await asyncio.to_thread(reload)
         return JSONResponse({"ok": True, "skills": library.describe(app_core.registry)})
+
+    # --- плановые задачи: создание из HUD — действие самого пользователя ---
+    async def schedules_api(request: Request):
+        if (resp := guard(request)) is not None:
+            return resp
+        sched = app_core.schedules
+        if request.method == "POST":
+            from .schedules import ScheduleError
+            body = await request.json()
+            try:
+                item = sched.add(prompt=str(body.get("prompt", "")), at_time=str(body.get("time", "")),
+                                 days=str(body.get("days", "")), every_minutes=int(body.get("every_minutes") or 0),
+                                 date=str(body.get("date", "")))
+            except (ScheduleError, ValueError) as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+            return JSONResponse({"ok": True, "id": item.id, "items": sched.describe()})
+        return JSONResponse({"items": sched.describe(), "runs": sched.runs(limit=30)})
+
+    async def schedule_item(request: Request):
+        if (resp := guard(request)) is not None:
+            return resp
+        sched = app_core.schedules
+        sid = request.path_params["sid"]
+        if request.method == "DELETE":
+            ok = sched.delete(sid)
+        else:
+            body = await request.json()
+            ok = sched.set_enabled(sid, bool(body.get("enabled")))
+        if not ok:
+            return JSONResponse({"ok": False, "error": "нет такой задачи"}, status_code=404)
+        return JSONResponse({"ok": True, "items": sched.describe()})
+
+    async def schedule_run(request: Request):
+        if (resp := guard(request)) is not None:
+            return resp
+        item = app_core.schedules.get(request.path_params["sid"])
+        if item is None:
+            return JSONResponse({"ok": False, "error": "нет такой задачи"}, status_code=404)
+        runtime.run_scheduled(item)
+        return JSONResponse({"ok": True})
 
     # --- звук: микрофоны, уровень, проверки ---
     async def audio(request: Request):
@@ -482,6 +541,9 @@ def create_app(runtime: Runtime, port: int):
         Route("/api/memory/{kind}/{item_id:int}", memory_item, methods=["DELETE", "PUT"]),
         Route("/api/settings", settings, methods=["POST"]),
         Route("/api/skills/reload", skills_reload, methods=["POST"]),
+        Route("/api/schedules", schedules_api, methods=["GET", "POST"]),
+        Route("/api/schedules/{sid:int}", schedule_item, methods=["PUT", "DELETE"]),
+        Route("/api/schedules/{sid:int}/run", schedule_run, methods=["POST"]),
         Route("/api/screenshots/{name}", screenshot),
         Route("/api/audio", audio),
         Route("/api/audio/level", audio_level),
@@ -538,6 +600,7 @@ def run(config: Config, app_factory, open_browser: bool | None = None, voice: bo
     core = app_factory()
     hub = Hub()
     runtime = Runtime(core, hub)
+    core.start_schedules(runtime.run_scheduled)  # плановые задачи идут через очередь HUD
     if voice:
         start_voice(core, hub)  # напоминания запустит голосовой цикл (или start_voice при ошибке)
     else:

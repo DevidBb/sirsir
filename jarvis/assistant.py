@@ -118,6 +118,8 @@ class Reply:
     spoken: bool = False
     # Структурированные данные последнего инструмента (результаты поиска и т.п.) для интерфейса.
     data: dict | None = None
+    # False — модель или инструмент недоступны (для журнала плановых задач и интерфейса).
+    ok: bool = True
 
 
 class Assistant:
@@ -150,6 +152,8 @@ class Assistant:
         # Навыки (skills/*/SKILL.md) и навык, действующий в текущей задаче.
         self.skills: Any = None
         self.active_skill: Any = None
+        # Плановая задача без пользователя: подтверждения невозможны — такие действия не выполняются.
+        self.unattended = False
         # Снимки экрана («посмотри на экран»); screen_grabber подменяется в тестах.
         self.screen_dir = config.root / "data" / "screenshots"
         self.screen_grabber: Callable[[], Any] | None = None
@@ -241,6 +245,29 @@ class Assistant:
         if self.agent_backend is not None:
             return self.agent_backend.run(self, text, on_sentence)
         return self._ask_llm(text, on_sentence)
+
+    def run_unattended(self, prompt: str) -> Reply:
+        """Плановая задача: отдельный диалог, без подтверждений, контекст пользователя не трогается."""
+        from .schedules import UNATTENDED_NOTE
+        backend = self.agent_backend
+        saved = (self.conversation, getattr(backend, "session_id", None), self.active_skill)
+        self.conversation = Conversation(self.conversation.max_turns)
+        if backend is not None:
+            backend.session_id = None
+        self.unattended = True
+        self.emergency.reset()
+        try:
+            found = self.skills.match(prompt) if self.skills is not None else None
+            self.active_skill, task = found if found else (None, prompt)
+            if self.active_skill is not None:
+                self.emit({"type": "skill", "name": self.active_skill.name,
+                           "description": self.active_skill.description})
+            return self._ask_model(UNATTENDED_NOTE + task)
+        finally:
+            self.unattended = False
+            self.conversation, session, self.active_skill = saved
+            if backend is not None:
+                backend.session_id = session
 
     def turn_tools(self) -> list:
         """Инструменты для модели в этой задаче: в навыке — только его, иначе все."""
@@ -598,7 +625,7 @@ class Assistant:
         except LLMError as e:
             log.error("LLM: %s", e)
             self.conversation.abort_turn()
-            return Reply("Языковая модель недоступна. Проверьте, что Ollama запущена.")
+            return Reply("Языковая модель недоступна. Проверьте, что Ollama запущена.", ok=False)
 
     def _run_tool(self, name: str, args: dict) -> str | Reply:
         try:
@@ -638,6 +665,12 @@ class Assistant:
                 self.emit({"type": "tool_end", "name": name, "ok": False, "text": problem})
                 return ToolResult(problem, ok=False)
         reason = self.registry.needs_confirmation(tool, clean)
+        if reason and self.unattended:
+            audit.info("%s %s -> не выполнено: плановая задача без пользователя", name, logged)
+            text = (f"Не выполнено: «{reason}» требует подтверждения пользователя, а плановая задача "
+                    "выполняется без него. Сообщи об этом в итоге.")
+            self.emit({"type": "tool_end", "name": name, "ok": False, "text": text})
+            return ToolResult(text, ok=False)
         if reason:
             audit.info("%s %s -> ожидает подтверждения", name, logged)
             details = tool.confirm_details(clean) if tool.confirm_details else None

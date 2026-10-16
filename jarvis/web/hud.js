@@ -60,7 +60,7 @@
       case "tool_start": case "tool_end": timelineEvent(ev); if (ev.type === "tool_end" && ev.data) showData(ev.data); break;
       case "confirm": showConfirm(ev.text); timelineAdd("warn", "Нужно подтверждение", ev.action || ""); break;
       case "confirm_resolved": hideConfirm(); break;
-      case "reply": finishReply(ev); break;
+      case "reply": finishReply(ev); if (ev.scheduled && document.querySelector('.tab.active')?.dataset.tab === "schedule") loadSchedules(); break;
       case "cancelled": hideConfirm(); timelineAdd("fail", "Задача остановлена", ""); stopSpeech(); break;
       case "notice": addSystem(ev.text); if (ev.reminder) speak(ev.text); break;
       case "skill": timelineAdd("task", "Навык: " + ev.name, ev.description || "", "", ev.ts); break;
@@ -320,6 +320,7 @@
     document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
     document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === "tab-" + t.dataset.tab));
     if (t.dataset.tab === "memory") loadMemory();
+    if (t.dataset.tab === "schedule") loadSchedules();
     if (t.dataset.tab === "settings" || t.dataset.tab === "diag") refreshStatus();
     if (t.dataset.tab === "diag") { loadAudio(); if (!levelTimer) pollLevel(); }
   });
@@ -379,6 +380,61 @@
     } catch (e) { addSystem("Не удалось загрузить память: " + e.message, true); }
   }
   $("memRefresh").onclick = loadMemory;
+
+  // ---------- расписание ----------
+  const RUN_STATUS = { ok: "✓", error: "✗", skipped: "пропущено", stopped: "остановлено" };
+  async function schedCall(path, method, body) {
+    const r = await fetch(path, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || String(r.status));
+    return data;
+  }
+  async function loadSchedules() {
+    let d;
+    try { d = await schedCall("/api/schedules", "GET"); } catch (e) { addSystem("Расписание: " + e.message, true); return; }
+    const ul = $("schedList"); ul.innerHTML = "";
+    if (!d.items.length) { const li = document.createElement("li"); li.className = "muted"; li.textContent = "задач нет"; ul.appendChild(li); }
+    const names = {};
+    d.items.forEach(it => {
+      names[it.id] = it.prompt;
+      const li = document.createElement("li");
+      const text = document.createElement("span");
+      const next = it.enabled && it.next_run ? ` · следующий: ${new Date(it.next_run * 1000).toLocaleString()}` : (it.enabled ? "" : " · выключена");
+      text.textContent = `№${it.id} «${it.prompt}» — ${it.when}${next}` + (it.running ? " · выполняется…" : "")
+        + (it.last ? ` · последний: ${RUN_STATUS[it.last.status] || it.last.status} ${new Date(it.last.started_at * 1000).toLocaleString()}` : "");
+      const acts = document.createElement("div"); acts.className = "sched-acts";
+      const mk = (label, fn, cls) => { const b = document.createElement("button"); b.className = "link-btn" + (cls ? " " + cls : ""); b.type = "button"; b.textContent = label; b.onclick = async () => { try { await fn(); } catch (e) { addSystem("Расписание: " + e.message, true); } loadSchedules(); }; acts.appendChild(b); };
+      mk("запустить сейчас", () => schedCall(`/api/schedules/${it.id}/run`, "POST"));
+      mk(it.enabled ? "выключить" : "включить", () => schedCall(`/api/schedules/${it.id}`, "PUT", { enabled: !it.enabled }));
+      mk("удалить", () => confirm(`Удалить задачу «${it.prompt}»?`) ? schedCall(`/api/schedules/${it.id}`, "DELETE") : null, "del");
+      li.append(text, acts); ul.appendChild(li);
+    });
+    const rl = $("schedRuns"); rl.innerHTML = "";
+    if (!d.runs.length) { const li = document.createElement("li"); li.className = "muted"; li.textContent = "запусков ещё не было"; rl.appendChild(li); }
+    d.runs.forEach(r => {
+      const li = document.createElement("li");
+      const det = document.createElement("details");
+      const sum = document.createElement("summary");
+      sum.textContent = `${new Date(r.started_at * 1000).toLocaleString()} · ${RUN_STATUS[r.status] || r.status} · ${names[r.schedule_id] || "№" + r.schedule_id}`;
+      const body = document.createElement("div"); body.className = "small"; body.innerHTML = md.render(r.result || "");
+      det.append(sum, body); li.appendChild(det); rl.appendChild(li);
+    });
+  }
+  $("schedRefresh").onclick = loadSchedules;
+  $("schedMode").onchange = () => {
+    const m = $("schedMode").value;
+    $("schedTime").hidden = m === "every"; $("schedDate").hidden = m !== "once"; $("schedEvery").hidden = m !== "every";
+  };
+  $("schedForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const m = $("schedMode").value;
+    const body = { prompt: $("schedPrompt").value.trim() };
+    if (m === "every") body.every_minutes = Number($("schedEvery").value);
+    else { body.time = $("schedTime").value; if (m === "once") body.date = $("schedDate").value; else body.days = m; }
+    try { await schedCall("/api/schedules", "POST", body); $("schedPrompt").value = ""; addSystem("Задача запланирована."); }
+    catch (err) { addSystem("Не запланировал: " + err.message, true); }
+    loadSchedules();
+  };
   const KIND_TABLES = { fact: "facts", preference: "facts", note: "notes", task: "tasks" };
   $("memSearchForm").onsubmit = async (e) => {
     e.preventDefault();

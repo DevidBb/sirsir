@@ -203,3 +203,14 @@ a { color: var(--cyan); }
   .chat { padding-right: 4px; }
   .core { display: none; }
 }
+
+/* --- расписание --- */
+.sched-form { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.sched-form input, .sched-form select { background: rgba(5, 8, 13, .6); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; min-width: 0; }
+.sched-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.sched-row input[type=number] { width: 90px; }
+.sched-row [hidden] { display: none; }
+.sched-acts { display: flex; flex-wrap: wrap; gap: 4px 10px; flex: none; max-width: 45%; justify-content: flex-end; }
+#schedList li { flex-wrap: wrap; }
+#schedRuns details { width: 100%; }
+#schedRuns summary { cursor: pointer; }

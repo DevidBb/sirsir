@@ -25,6 +25,7 @@ from .memory import Memory
 from .notes import Notes
 from .providers import make_agent_backend
 from .reminders import Reminders
+from .schedules import Scheduler
 from .security import NetworkGuard
 from .text_to_speech import Speaker, play_beep
 from .tool_registry import ToolRegistry
@@ -94,6 +95,8 @@ class App:
         self.reminders.register_tools(self.registry)
         self.notes = Notes(self.memory)
         self.notes.register_tools(self.registry)
+        self.schedules = Scheduler(self.memory)
+        self.schedules.register_tools(self.registry)
         calculator.register_tools(self.registry)
         self._register_voice_tool()
         self._register_screen_tool()
@@ -211,6 +214,18 @@ class App:
         else:
             self.speaker.say(text)
 
+    def start_schedules(self, on_due) -> None:
+        """Запустить планировщик (один раз: в HUD — через очередь интерфейса)."""
+        if self.config.get("schedules.enabled", True):
+            self.schedules.start(on_due)
+
+    def _run_scheduled(self, schedule) -> None:
+        """Голосовой и текстовый режимы: выполнить в потоке планировщика и сообщить итог."""
+        with self.handle_lock:
+            text = self.schedules.execute(schedule, self.assistant)
+        short = text if len(text) <= 300 else text[:300].rsplit(" ", 1)[0] + "…"
+        self._on_reminder(f"Плановая задача «{schedule.prompt}»: {short}")
+
     def _deliver_notifications(self) -> None:
         while True:
             try:
@@ -237,6 +252,7 @@ class App:
     def run_text(self) -> None:
         print("Текстовый режим. Пишите команды; «заверши работу» или Ctrl+C — выход.")
         self.reminders.start(self._on_reminder)
+        self.start_schedules(self._run_scheduled)
         self._preload_llm()
         while not self.stop_event.is_set():
             try:
@@ -295,6 +311,7 @@ class App:
             self.tray = Tray(self.toggle_mic, lambda: mic.muted, self.emergency_stop, self.quit)
             self.tray.start()
         self.reminders.start(self._on_reminder)
+        self.start_schedules(self._run_scheduled)
         self._preload_llm()
         self.speaker.say(f"{self.config.get('assistant.name', 'Джарвис')} готов.")
         print("Скажите «Джарвис». Enter — вкл/выкл микрофон, s+Enter — стоп, q+Enter — выход.")
@@ -523,6 +540,7 @@ class App:
 
     def close(self) -> None:
         self.reminders.stop()
+        self.schedules.stop()
         if self.mcp is not None:
             self.mcp.close()
         if self.browser is not None:

@@ -111,7 +111,7 @@ class ClaudeAgentBackend:
             log.exception("Claude Agent SDK")
             self.last_error = str(e).splitlines()[0] if str(e) else type(e).__name__
             return Reply(f"Модель Claude недоступна: {self.last_error}. Проверьте авторизацию "
-                         f"(claude login) или выберите Ollama в настройках.")
+                         f"(claude login) или выберите Ollama в настройках.", ok=False)
         if assistant.emergency.active:
             return Reply("Остановлено.", STOP, expect_followup=False)
         assistant.conversation.begin_turn(text)

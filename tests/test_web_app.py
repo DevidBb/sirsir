@@ -173,3 +173,25 @@ def test_memory_search_kinds_and_tasks(server):
     assert client.put(f"/api/memory/facts/{fid}", json={"text": "Отвечай коротко", "kind": "fact"}).json()["ok"]
     assert app.memory.list_facts()[0]["kind"] == "fact"
     assert client.delete(f"/api/memory/tasks/{tid}").json()["ok"] and app.memory.list_tasks() == []
+
+
+def test_schedules_api_and_run_now(server):
+    client, app, _ = server
+    app.llm = app.assistant.llm = FakeLLM([text("Сводка: всё спокойно.")])
+    bad = client.post("/api/schedules", json={"prompt": "x", "every_minutes": 3})
+    assert bad.status_code == 400 and "15" in bad.json()["error"]
+    created = client.post("/api/schedules", json={"prompt": "сводка новостей", "time": "09:00", "days": "weekdays"})
+    sid = created.json()["id"]
+    assert created.json()["items"][0]["when"] == "по будням в 09:00"
+    with client.websocket_connect(WS, headers=ORIGIN) as ws:
+        ws.receive_json()
+        assert client.post(f"/api/schedules/{sid}/run").json()["ok"]
+        task, _ = receive_until(ws, "task")
+        assert task["text"] == "⏰ сводка новостей"
+        reply, _ = receive_until(ws, "reply")
+        assert reply["text"] == "Сводка: всё спокойно." and reply["scheduled"]
+    runs = client.get("/api/schedules").json()["runs"]
+    assert runs[0]["status"] == "ok" and runs[0]["schedule_id"] == sid
+    assert client.put(f"/api/schedules/{sid}", json={"enabled": False}).json()["items"][0]["enabled"] is False
+    assert client.delete(f"/api/schedules/{sid}").json()["items"] == []
+    assert client.delete(f"/api/schedules/{sid}").status_code == 404

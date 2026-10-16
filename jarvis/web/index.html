@@ -58,6 +58,7 @@
       <button class="tab active" data-tab="timeline">Ход задачи</button>
       <button class="tab" data-tab="results">Результаты</button>
       <button class="tab" data-tab="memory">Память</button>
+      <button class="tab" data-tab="schedule">Расписание</button>
       <button class="tab" data-tab="settings">Настройки</button>
       <button class="tab" data-tab="diag">Диагностика</button>
     </nav>
@@ -68,6 +69,33 @@
 
     <div class="panel" id="tab-results">
       <div id="results"><p class="muted">Здесь появятся результаты поиска и видео.</p></div>
+    </div>
+
+    <div class="panel" id="tab-schedule">
+      <div class="panel-head">
+        <h3>Плановые задачи</h3>
+        <button class="link-btn" id="schedRefresh">обновить</button>
+      </div>
+      <form class="sched-form" id="schedForm">
+        <input id="schedPrompt" placeholder="Что сделать, например: сводка главных новостей тремя пунктами" maxlength="500" required>
+        <div class="sched-row">
+          <select id="schedMode">
+            <option value="daily">каждый день</option>
+            <option value="weekdays">по будням</option>
+            <option value="weekends">по выходным</option>
+            <option value="once">один раз</option>
+            <option value="every">каждые N минут</option>
+          </select>
+          <input id="schedTime" type="time" value="09:00" aria-label="Время">
+          <input id="schedDate" type="date" hidden aria-label="Дата">
+          <input id="schedEvery" type="number" min="15" step="5" value="60" hidden aria-label="Минуты">
+          <button class="btn primary">Запланировать</button>
+        </div>
+      </form>
+      <p class="muted small">Задача выполняется без вас: действия с подтверждением (отправка, удаление, изменение файлов) в ней не выполняются — Джарвис сообщит об этом в итоге. Если компьютер был выключен, запуск, пропущенный больше чем на час, не выполняется.</p>
+      <ul class="mem-list" id="schedList"></ul>
+      <h3>Последние запуски</h3>
+      <ul class="mem-list" id="schedRuns"></ul>
     </div>
 
     <div class="panel" id="tab-memory">
