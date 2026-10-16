@@ -500,7 +500,7 @@ class Assistant:
             except LLMError as e:
                 log.error("LLM: %s", e)
                 return Reply("Языковая модель недоступна. Проверьте Ollama или авторизацию Claude.")
-            draft = (message.get("content") or "").strip().strip("«»\\"' ")
+            draft = (message.get("content") or "").strip().strip("«»\"' ")
         if not draft or looks_like_tool_text(draft):
             return Reply("Не получилось составить текст. Скажите иначе, пожалуйста.")
         words = draft.split()
