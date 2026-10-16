@@ -63,6 +63,17 @@ if errorlevel 1 set ERRORS=1
 
 :ollama
 echo.
+if "%AUTO%"=="1" goto ollama_check
+echo Модель Claude (облако Anthropic) для сложных задач: около 250 МБ, нужен вход "claude login"
+echo или ключ ANTHROPIC_API_KEY в файле .env. Без неё работает локальная Ollama.
+set CLAUDE=n
+set /p CLAUDE="Установить Claude Agent SDK? [y/N] "
+if /i not "%CLAUDE%"=="y" goto ollama_check
+pip install -r requirements-claude.txt
+if errorlevel 1 set ERRORS=1
+echo Выбрать Claude: в HUD Настройки - Модель - Claude.
+:ollama_check
+echo.
 where ollama >nul 2>nul
 if errorlevel 1 goto no_ollama
 if "%AUTO%"=="1" goto checks
