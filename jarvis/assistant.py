@@ -109,8 +109,21 @@ COMPLEX_RE = re.compile(
     r"exchange rate|stock price|look up|research|sources|based on that|execute|run it)\w*", re.I)
 
 
+# Только настоящие многошаговые инструкции должны обходить быстрый поиск.
+MULTISTEP_RE = re.compile(
+    r"\\b(?:сравн|сопостав|проанализ|анализ|вывод|резюм|итог|объясн|прочита|прочти|изуч|выбер|"
+    r"расскаж|перескаж|составь|оцени|проверь|compare|summar|analy|conclu|explain|read|review|"
+    r"then|after that|based on that|sources)\\w*", re.I)
+
+
 def is_complex_request(query: str) -> bool:
+    """Запросу нужны свежие данные или более сильная модель."""
     return bool(COMPLEX_RE.search(query)) or len(query.split()) > 14
+
+
+def is_multistep_request(query: str) -> bool:
+    """Явный поиск можно выполнить сразу; анализ нескольких источников — через модель."""
+    return bool(MULTISTEP_RE.search(query)) or len(query.split()) > 14
 
 
 LEAD_WORDS_RE = re.compile(r"^\s*(?:(?:привет|здравствуй|слушай|эй|окей|ок|джарвис)[\s,!.]+)+",
@@ -309,9 +322,11 @@ class Assistant:
         return [t for t in self.registry.tools() if t.name != "use_skill" and skill.allows(t.name)]
 
     def skill_prompt(self) -> str:
-        if self.skills is None:
-            return ""
-        return self.active_skill.prompt() if self.active_skill is not None else self.skills.catalog()
+        # Изолированные операции (например, сочинение промпта) могут задать
+        # active_skill даже без общего менеджера навыков.
+        if self.active_skill is not None:
+            return self.active_skill.prompt()
+        return self.skills.catalog() if self.skills is not None else ""
 
     def emit(self, event: dict) -> None:
         try:
@@ -325,7 +340,7 @@ class Assistant:
             return intent
         names = self.registry.names()
         site = intent.args.get("site", "default")
-        if is_complex_request(intent.args.get("query", "")):
+        if is_multistep_request(intent.args.get("query", "")):
             return Intent("_llm")  # «найди …, сравни и дай вывод» — план из нескольких шагов
         if site == "youtube" and "youtube_search" in names:
             return Intent("youtube_search", {"query": intent.args["query"]})
