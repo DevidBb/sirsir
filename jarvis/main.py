@@ -110,10 +110,6 @@ class App:
         # Навыки: skills/<имя>/SKILL.md — инструкция и набор инструментов для повторяемых задач.
         self.skills = skills.setup(config, self.registry)
         self.assistant.skills = self.skills
-        # В гибридном режиме подключаем Claude заранее в фоне, чтобы не платить
-        # задержкой запуска процесса за первый сложный запрос пользователя.
-        if self.assistant.agent_backend is not None:
-            self.assistant.agent_backend.warm_up(self.assistant)
 
     def _setup_browser(self) -> None:
         """Браузер Джарвиса (Playwright). Без Playwright помощник работает как раньше."""

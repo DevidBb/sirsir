@@ -7,7 +7,7 @@ pytest.importorskip("starlette")
 pytest.importorskip("httpx")
 from starlette.testclient import TestClient  # noqa: E402
 
-from conftest import FakeLLM, text  # noqa: E402
+from conftest import ROOT, FakeLLM, text  # noqa: E402
 from jarvis.main import App  # noqa: E402
 from jarvis.web_app import Hub, Runtime, _same_origin, create_app  # noqa: E402
 
@@ -151,7 +151,7 @@ def test_switch_provider(server):
 def test_status_lists_tools_and_checks(server):
     client, _, _ = server
     s = client.get("/api/status").json()
-    assert s["state"] == "idle" and s["provider"]["active"] == "hybrid"
+    assert s["state"] == "idle" and s["provider"]["active"] == "ollama"
     assert any(t["name"] == "calculate" for t in s["tools"])
     assert any(c["name"] == "Python" for c in s["checks"])
     assert s["mcp"] == []  # в config.toml серверов нет
@@ -209,3 +209,8 @@ def test_memory_export_import_api(server):
     assert r.json()["ok"] and r.json()["stats"]["facts"] == 1
     assert client.post("/api/memory/import", content=b"not json").status_code == 400
     assert client.post("/api/memory/import", content=b"{}", headers={"origin": "http://evil.example"}).status_code == 403
+
+
+def test_hybrid_is_the_shipped_default():
+    from jarvis.config import Config
+    assert Config.load(ROOT / "config.toml").get("llm.provider") == "hybrid"

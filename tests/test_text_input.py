@@ -279,16 +279,15 @@ def test_hybrid_prompt_uses_claude_without_tools_and_targets_chatgpt(config):
     class FakeClaude:
         def __init__(self):
             self.calls = []
-            self.reset_calls = 0
+            self.session_id = "user-session"
 
         def run(self, isolated, request, on_sentence=None):
             self.calls.append(request)
+            assert self.session_id is None  # промпт — в отдельной сессии Claude
+            self.session_id = "compose-session"
             assert isolated.turn_tools() == []
             assert "готовый к копированию" in isolated.skill_prompt()
             return Reply("Ты — эксперт по созданию сайтов. Подготовь подробный план и код.")
-
-        def reset(self):
-            self.reset_calls += 1
 
     claude = FakeClaude()
     a.agent_backend = claude
@@ -297,7 +296,7 @@ def test_hybrid_prompt_uses_claude_without_tools_and_targets_chatgpt(config):
 
     assert "Требуется подтверждение" in reply.text
     assert claude.calls == ["Напиши промпт для ChatGPT, чтобы он создал сайт."]
-    assert claude.reset_calls == 1
+    assert claude.session_id == "user-session"  # разговор пользователя с Claude не потерян
     assert a.fake.requests == []
 
     result = a.handle("подтверждаю")

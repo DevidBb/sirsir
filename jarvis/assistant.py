@@ -503,6 +503,10 @@ class Assistant:
             isolated.conversation = Conversation(self.conversation.max_turns)
             isolated.active_skill = ComposeOnlySkill()
             isolated.remember_task = lambda *args, **kwargs: None  # не засорять историю задач
+            # Отдельная сессия Claude, затем возврат к диалогу пользователя (как в run_unattended):
+            # reset() здесь стёр бы весь разговор с Claude.
+            saved_session = getattr(self.agent_backend, "session_id", None)
+            self.agent_backend.session_id = None
             try:
                 generated = self.agent_backend.run(isolated, request, None)
                 if generated.ok and generated.text.strip():
@@ -512,9 +516,7 @@ class Assistant:
             except Exception:
                 log.exception("Не удалось составить текст через Claude; пробую локальную Ollama")
             finally:
-                reset = getattr(self.agent_backend, "reset", None)
-                if callable(reset):
-                    reset()
+                self.agent_backend.session_id = saved_session
 
         if draft is None:
             messages = [{"role": "system", "content": system_prompt},

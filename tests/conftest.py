@@ -18,6 +18,9 @@ def config(tmp_path):
     cfg.set("memory.db_path", str(tmp_path / "memory.db"))
     # Не трогать настоящее меню «Пуск» (на Windows CI оно есть).
     cfg.set("windows.launcher.start_menu_dirs", [])
+    # Тесты не должны зависеть от провайдера в config.toml и запускать настоящий Claude Code,
+    # даже если claude-agent-sdk установлен. Тесты Claude/гибрида задают провайдера сами.
+    cfg.set("llm.provider", "ollama")
     return cfg
 
 
