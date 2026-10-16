@@ -298,8 +298,33 @@ def test_hybrid_routes_simple_questions_locally_and_current_tasks_to_claude(conf
     assert claude.calls == []
 
     assert is_complex_request("Какая погода завтра в Таллинне?")
+    assert is_complex_request("What is tomorrow's weather in Tallinn?")
+    assert is_complex_request("продолжи с предыдущего шага")
     assert a._ask_model("Какая погода завтра в Таллинне?").text == "Ответ Claude."
     assert claude.calls == ["Какая погода завтра в Таллинне?"]
 
     assert a._ask_model("Сравни два варианта и дай вывод.").text == "Ответ Claude."
     assert claude.calls[-1] == "Сравни два варианта и дай вывод."
+
+
+
+def test_hybrid_keeps_quick_windows_commands_local(config):
+    from jarvis.assistant import Reply
+
+    config.set("llm.provider", "hybrid")
+    a = build(config, [])
+
+    class FakeClaude:
+        calls = []
+
+        def run(self, assistant, request, on_sentence=None):
+            self.calls.append(request)
+            return Reply("Ответ Claude.")
+
+    claude = FakeClaude()
+    a.agent_backend = claude
+    reply = a.handle("Открой блокнот")
+    assert reply.text == "Запускаю блокнот."
+    assert a.launched == ["notepad.exe"]
+    assert claude.calls == []
+    assert a.fake.requests == []
