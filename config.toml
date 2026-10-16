@@ -216,6 +216,11 @@ audit_log = "data/actions.log"
 "гитхаб" = "https://github.com"
 "википедия" = "https://ru.wikipedia.org"
 "почта" = "https://mail.google.com"
+"chatgpt" = "https://chatgpt.com"
+"чатгпт" = "https://chatgpt.com"
+"twitter" = "https://x.com"
+"твиттер" = "https://x.com"
+"икс" = "https://x.com"
 
 [windows.folders]
 # Папки, которые можно открыть голосом («открой загрузки»).
