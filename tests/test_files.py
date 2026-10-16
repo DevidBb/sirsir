@@ -87,7 +87,7 @@ def test_file_changed_after_diff_is_not_overwritten(env):
     (root / "src" / "app.py").write_text("def main():\n    return 1  # правка пользователя\n", encoding="utf-8")
     done = assistant.handle("подтверждаю")
     assert "изменился после показа" in done.text
-    assert "правка пользователя" in (root / "src" / "app.py").read_text()
+    assert "правка пользователя" in (root / "src" / "app.py").read_text(encoding="utf-8")
 
 
 def test_precheck_errors_skip_confirmation(env):
