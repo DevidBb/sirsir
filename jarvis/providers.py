@@ -216,7 +216,7 @@ class ClaudeAgentBackend:
                                   self.timeout + 30)
         except (asyncio.TimeoutError, concurrent.futures.TimeoutError, TimeoutError):
             self.last_error = "превышено время ответа"
-            return Reply(f"Задача не уложилась в {int(self.timeout)} с и остановлена.")
+            return Reply(f"Задача не уложилась в {int(self.timeout)} с и остановлена.", ok=False)
         except Exception as e:  # noqa: BLE001 — честная ошибка вместо падения
             if assistant.emergency.active:  # прервали по команде пользователя — это не сбой
                 return Reply("Остановлено.", STOP, expect_followup=False)
