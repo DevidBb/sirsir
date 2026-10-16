@@ -96,6 +96,7 @@ class App:
         self.notes.register_tools(self.registry)
         calculator.register_tools(self.registry)
         self._register_voice_tool()
+        self._register_screen_tool()
         self.assistant = Assistant(config, self.llm, self.registry, self.memory,
                                    on_setting_changed=self._on_setting_changed)
         self.assistant.agent_backend = make_agent_backend(config)
@@ -145,6 +146,22 @@ class App:
         elif key == "llm.num_predict":
             self.llm.num_predict = int(value)
         self.speaker.apply_settings()
+
+    def _register_screen_tool(self) -> None:
+        from .screen import ScreenError, capture_screen
+        from .tool_registry import Tool, ToolResult
+
+        def screenshot() -> ToolResult:
+            try:
+                path = capture_screen(self.config.root / "data" / "screenshots")
+            except (ScreenError, OSError) as e:
+                return ToolResult(f"Не удалось сделать снимок экрана: {e}", ok=False)
+            return ToolResult(f"Снимок экрана сохранён: data/screenshots/{path.name}",
+                              {"kind": "screen", "file": path.name})
+        # Модель может сохранить снимок, но не видит его: показывать экран модели можно
+        # только по прямой просьбе пользователя («посмотри на экран»).
+        self.registry.register(Tool("screen_screenshot", "Сохранить снимок всего экрана в файл "
+                                    "(сам снимок тебе не передаётся)", screenshot, category="system"))
 
     def _register_voice_tool(self) -> None:
         from .text_to_speech import SILERO_VOICES

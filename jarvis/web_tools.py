@@ -175,7 +175,7 @@ class WebTools:
         except BrowserError as e:
             return fail(str(e))
         return ToolResult(f"Снимок страницы сохранён: {path.name}",
-                          {"kind": "screenshot", "file": path.name})
+                          {"kind": "screenshot", "file": path.name, "image_path": str(path)})
 
     # --- проверки перед действиями ---
     def _click_check(self, args: dict[str, Any]) -> str | None:

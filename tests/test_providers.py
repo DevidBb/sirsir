@@ -134,3 +134,38 @@ def test_make_agent_backend_by_config(config):
     config.set("llm.claude.model", "haiku")
     backend = make_agent_backend(config)
     assert isinstance(backend, ClaudeAgentBackend) and backend.model == "haiku"
+
+
+def test_browser_screenshot_is_shown_to_model(env, tmp_path):
+    from PIL import Image
+    assistant, _, _, _ = env
+    shot = tmp_path / "shot.png"
+    Image.new("RGB", (100, 50), (255, 255, 255)).save(shot)
+    assistant.registry.register(Tool("snap", "Снимок страницы", lambda: ToolResult(
+        "Снимок страницы сохранён", {"kind": "screenshot", "file": "shot.png", "image_path": str(shot)})))
+    outputs = []
+
+    class Capture(FakeClient):
+        async def receive_response(self):
+            out = await self.options.mcp_servers["jarvis"]["tools"]["snap"].handler({})
+            outputs.append(out)
+            yield result("Белая страница.")
+    assistant.agent_backend._client_factory = Capture
+    assistant.handle("сделай снимок страницы и опиши подробно что там")
+    kinds = [c["type"] for c in outputs[0]["content"]]
+    assert kinds == ["text", "image"] and outputs[0]["content"][1]["mimeType"] == "image/jpeg"
+
+
+def test_user_image_is_sent_with_prompt(env):
+    assistant, backend, _, _ = env
+    prompts = []
+
+    class Capture(FakeClient):
+        async def query(self, prompt):
+            prompts.append([m async for m in prompt])
+    FakeClient.script = [result("Вижу экран.")]
+    backend._client_factory = Capture
+    reply = backend.run(assistant, "что на экране", None, image=("QUJD", "image/jpeg"))
+    content = prompts[0][0]["message"]["content"]
+    assert content[0]["type"] == "image" and content[0]["source"]["data"] == "QUJD"
+    assert content[1]["text"].endswith("что на экране") and reply.text == "Вижу экран."

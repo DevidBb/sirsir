@@ -11,7 +11,7 @@
     browser_type: "Ввожу текст", browser_press: "Нажимаю клавишу", browser_scroll: "Прокручиваю",
     browser_back: "Назад", browser_tabs: "Вкладки", browser_switch_tab: "Переключаю вкладку",
     browser_close_tab: "Закрываю вкладку", browser_screenshot: "Снимок страницы",
-    open_website: "Открываю сайт", open_app: "Запускаю программу", web_search: "Поиск на сайте",
+    open_website: "Открываю сайт", look_at_screen: "Смотрю на экран", screen_screenshot: "Снимок экрана", open_app: "Запускаю программу", web_search: "Поиск на сайте",
   };
 
   let ws = null, reconnectDelay = 500, uiState = "idle";
@@ -161,8 +161,9 @@
         c.append(num, title, meta, snip, acts);
         wrap.appendChild(c);
       });
-    } else if (data.kind === "screenshot") {
-      const img = document.createElement("img"); img.className = "shot"; img.alt = "Снимок страницы";
+    } else if (data.kind === "screenshot" || data.kind === "screen") {
+      const img = document.createElement("img"); img.className = "shot";
+      img.alt = data.kind === "screen" ? "Снимок экрана" : "Снимок страницы";
       img.src = "/api/screenshots/" + encodeURIComponent(data.file);
       wrap.appendChild(img);
     } else if (data.kind === "page" || data.kind === "opened") {
@@ -172,11 +173,11 @@
     return wrap;
   }
   function showData(data) {
-    if (data.kind !== "youtube" && data.kind !== "web" && data.kind !== "screenshot") return;
+    if (!["youtube", "web", "screenshot", "screen"].includes(data.kind)) return;
     const box = $("results");
     box.innerHTML = "";
     const h = document.createElement("h3");
-    h.textContent = data.kind === "youtube" ? `YouTube: ${data.query}` : data.kind === "web" ? `Поиск: ${data.query} (${data.engine})` : "Снимок";
+    h.textContent = data.kind === "youtube" ? `YouTube: ${data.query}` : data.kind === "web" ? `Поиск: ${data.query} (${data.engine})` : data.kind === "screen" ? "Снимок экрана" : "Снимок страницы";
     box.append(h, renderData(data));
   }
 

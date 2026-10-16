@@ -93,13 +93,15 @@ class ClaudeAgentBackend:
 
     # --- ход диалога ---
     def run(self, assistant: "Assistant", text: str,
-            on_sentence: Callable[[str], bool] | None = None) -> "Reply":
+            on_sentence: Callable[[str], bool] | None = None,
+            image: tuple[str, str] | None = None) -> "Reply":
+        """image — (base64, media type): снимок, приложенный к запросу пользователя."""
         from .assistant import STOP, Reply
         assistant.emergency.reset()
         state: dict[str, Any] = {"data": None, "confirm": None}
         try:
             answer = asyncio.run(asyncio.wait_for(
-                self._turn(assistant, text, on_sentence, state), self.timeout))
+                self._turn(assistant, text, on_sentence, state, image), self.timeout))
         except asyncio.TimeoutError:
             self.last_error = "превышено время ответа"
             return Reply(f"Задача не уложилась в {int(self.timeout)} с и остановлена.")
@@ -145,14 +147,26 @@ class ClaudeAgentBackend:
                         text, is_error = str(outcome), not getattr(outcome, "ok", True)
                         if getattr(outcome, "data", None):
                             state["data"] = outcome.data
-                    return {"content": [{"type": "text", "text": text}], "is_error": is_error}
+                    content = [{"type": "text", "text": text}]
+                    # Снимок страницы браузера Джарвиса модель видит как изображение.
+                    shot = (getattr(outcome, "data", None) or {}).get("image_path")
+                    if shot:
+                        from .screen import image_for_model
+                        data, mime = await asyncio.to_thread(image_for_model, shot)
+                        content.append({"type": "image", "data": data, "mimeType": mime})
+                    return {"content": content, "is_error": is_error}
                 return handler
             sdk_tools.append(tool(t.name, t.description, schema)(make(t.name)))
         return create_sdk_mcp_server("jarvis", tools=sdk_tools), [f"mcp__jarvis__{t.name}"
                                                                  for t in assistant.registry.tools()]
 
     def _options(self, assistant: "Assistant", server, allowed: list[str]):
-        from claude_agent_sdk import ClaudeAgentOptions, PermissionResultDeny
+        import warnings
+
+        from claude_agent_sdk import CanUseToolShadowedWarning, ClaudeAgentOptions, PermissionResultDeny
+        # can_use_tool — запасной запрет для всего, что не в allowed_tools; SDK предупреждает,
+        # что для разрешённых инструментов он не вызывается, — это и задумано.
+        warnings.simplefilter("ignore", CanUseToolShadowedWarning)
 
         async def deny_other(tool_name, _input, _ctx):
             # Сюда попадают только инструменты вне allowed_tools — их запрещаем всегда.
@@ -169,7 +183,8 @@ class ClaudeAgentBackend:
             cwd=str(self.work_dir), include_partial_messages=True, can_use_tool=deny_other)
 
     async def _turn(self, assistant: "Assistant", text: str,
-                    on_sentence: Callable[[str], bool] | None, state: dict[str, Any]) -> str:
+                    on_sentence: Callable[[str], bool] | None, state: dict[str, Any],
+                    image: tuple[str, str] | None = None) -> str:
         from claude_agent_sdk import (AssistantMessage, ClaudeSDKClient, ResultMessage, StreamEvent,
                                       TextBlock)
         server, allowed = self._build_tools(assistant, state)
@@ -187,7 +202,11 @@ class ClaudeAgentBackend:
                         return
             watcher = asyncio.create_task(watch_stop())
             try:
-                await client.query(self._context(assistant) + text)
+                prompt = self._context(assistant) + text
+                if image is None:
+                    await client.query(prompt)
+                else:
+                    await client.query(_with_image(prompt, image))
                 async for msg in client.receive_response():
                     if isinstance(msg, StreamEvent):
                         ev = msg.event or {}
@@ -212,6 +231,14 @@ class ClaudeAgentBackend:
             stream.flush()
             state["spoken"] = bool(stream.spoken)
         return (result_text or "\n\n".join(parts)).strip()
+
+
+async def _with_image(text: str, image: tuple[str, str]):
+    data, mime = image
+    yield {"type": "user", "parent_tool_use_id": None,
+           "message": {"role": "user", "content": [
+               {"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}},
+               {"type": "text", "text": text}]}}
 
 
 def make_agent_backend(config) -> ClaudeAgentBackend | None:

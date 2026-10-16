@@ -125,6 +125,14 @@ EN_YT_RE = re.compile(r"^(?:open youtube and )?(?:search|find|look up|look for|s
                       r"|^(?:search|find|look up) (?P<q2>.+) on youtube$")
 EN_WEB_RE = re.compile(r"^(?:google|search the web for|search the internet for|search online for|"
                        r"look up online|find online|search for) (?P<q>.+)$")
+# «Посмотри на экран и скажи, что за ошибка», «что у меня на экране», «look at my screen».
+LOOK_SCREEN_RE = re.compile(
+    r"^(?:посмотри|глянь|взгляни|смотри)(?: на)? (?:мой |наш )?экран\b"
+    r"|^(?:что|кто) (?:у меня |сейчас )?(?:на|происходит на) экране\b"
+    r"|^(?:объясни|расскажи|опиши|скажи) (?:мне )?что (?:у меня |сейчас )?(?:на|происходит на) экране\b"
+    r"|^look at (?:my|the) screen\b|^what(?: is|s| s) on (?:my|the) screen\b")
+SCREENSHOT_PHRASES = ("сделай скриншот", "сделай скриншот экрана", "скриншот экрана", "сними экран",
+                      "сделай снимок экрана", "снимок экрана", "take a screenshot", "screenshot")
 # «Открой второе видео», «открой результат 3», «open the second result».
 RESULT_ORDINALS = {"первое": 1, "первый": 1, "первую": 1, "второе": 2, "второй": 2, "вторую": 2,
                    "третье": 3, "третий": 3, "третью": 3, "четвертое": 4, "четвертый": 4,
@@ -176,6 +184,10 @@ class IntentMatcher:
             return Intent("type_in_window", {"window": m.group(1), "text": m.group(2).strip()})
         if COMPOSE_RE.match(norm):
             return Intent("compose_text", {"request": text.strip()})
+        if LOOK_SCREEN_RE.match(norm):
+            return Intent("look_at_screen", {"question": text.strip()})
+        if norm in SCREENSHOT_PHRASES:
+            return Intent("screen_screenshot")
         m = OPEN_RESULT_RE.match(norm)
         if m:
             index = RESULT_ORDINALS[m.group("w")] if m.group("w") else int(m.group("n") or m.group("n2"))

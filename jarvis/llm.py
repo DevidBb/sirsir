@@ -120,11 +120,12 @@ class OllamaClient:
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
              on_text: Callable[[str], bool] | None = None,
-             options: dict[str, Any] | None = None) -> dict[str, Any]:
+             options: dict[str, Any] | None = None, model: str | None = None) -> dict[str, Any]:
         """Запрос к модели. С on_text ответ приходит потоком: функция получает
-        каждый кусочек текста и может вернуть False, чтобы прервать генерацию."""
+        каждый кусочек текста и может вернуть False, чтобы прервать генерацию.
+        model — другая модель Ollama для этого запроса (например, с поддержкой изображений)."""
         payload: dict[str, Any] = {
-            "model": self.model,
+            "model": model or self.model,
             "messages": messages,
             "stream": on_text is not None,
             "think": False,

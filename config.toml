@@ -73,6 +73,9 @@ max_tool_calls_per_turn = 3
 # (нужен вход в Claude Code: «claude login», или ANTHROPIC_API_KEY в окружении).
 # Можно переключить в интерфейсе: Настройки → Модель.
 provider = "ollama"
+# Модель Ollama с поддержкой изображений для «посмотри на экран» (пусто — нет;
+# например "qwen2.5vl:7b", ~6 ГБ: ollama pull qwen2.5vl:7b). С провайдером claude не нужна.
+vision_model = ""
 
 [llm.claude]
 # Пусто — модель Claude Code по умолчанию; можно "sonnet", "opus", "haiku" или полный id.

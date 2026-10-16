@@ -174,6 +174,34 @@ def _():
     return f"устройств: {len(devices)} (на виртуальной машине их может не быть)"
 
 
+@check("снимок экрана (Pillow ImageGrab) для «посмотри на экран»")
+def _():
+    from jarvis.screen import capture_screen, image_for_model
+    with tempfile.TemporaryDirectory() as d:
+        path = capture_screen(Path(d))
+        data, mime = image_for_model(path)
+        from PIL import Image
+        with Image.open(path) as im:
+            size = im.size
+    assert len(data) > 1000 and mime == "image/jpeg"
+    return f"экран {size[0]}x{size[1]}"
+
+
+@check("браузер Джарвиса (Playwright Chromium): открыть страницу и прочитать элементы")
+def _():
+    from jarvis.browser import BrowserController
+    with tempfile.TemporaryDirectory() as d:
+        b = BrowserController(Path(d) / "profile", headless=True, channel="chromium", timeout_ms=15000)
+        try:
+            title = b.call(lambda: (b._ensure(), b.page.set_content(
+                "<title>Тест</title><button>Нажми</button>"), b.page.title())[2])
+            names = [e.name for e in b.read().elements]
+        finally:
+            b.close()
+    assert title == "Тест" and "Нажми" in names, (title, names)
+    return "Chromium запущен, элементы найдены"
+
+
 def main() -> int:
     print(f"Python {sys.version.split()[0]}, {sys.platform}, {os.environ.get('PROCESSOR_IDENTIFIER', '')}\n")
     results: list[tuple[str, bool, str]] = []
