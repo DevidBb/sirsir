@@ -53,9 +53,9 @@ if errorlevel 1 (
 echo.
 if "%AUTO%"=="1" goto ollama
 echo Естественный голос Silero: около 250 МБ - torch для CPU и модель 40 МБ.
-set SILERO=n
-set /p SILERO="Установить голос Silero? [y/N] "
-if /i not "%SILERO%"=="y" goto ollama
+set SILERO=y
+set /p SILERO="Установить голос Silero? [Y/n] "
+if /i "%SILERO%"=="n" goto ollama
 pip install -r requirements-silero.txt --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
 if errorlevel 1 set ERRORS=1
 python scripts\download_models.py --only-silero -y
