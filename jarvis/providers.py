@@ -119,6 +119,7 @@ class ClaudeAgentBackend:
         assistant.conversation.end_turn()
         if state["confirm"] is not None:  # вопрос «подтверждаете?» должен прозвучать последним
             return state["confirm"]
+        assistant.remember_task(text, answer, state.get("tools", []))
         return Reply(answer or "Не знаю, что ответить.", data=state["data"],
                      spoken=bool(on_sentence) and state.get("spoken", False))
 
@@ -140,6 +141,7 @@ class ClaudeAgentBackend:
             def make(name: str):
                 async def handler(args: dict[str, Any]) -> dict[str, Any]:
                     outcome = await asyncio.to_thread(assistant._run_tool, name, args)
+                    state.setdefault("tools", []).append(name)
                     if isinstance(outcome, Reply):  # нужно подтверждение
                         state["confirm"] = outcome
                         text, is_error = CONFIRM_NOTE.format(q=outcome.text), False
@@ -160,7 +162,7 @@ class ClaudeAgentBackend:
         return create_sdk_mcp_server("jarvis", tools=sdk_tools), [f"mcp__jarvis__{t.name}"
                                                                  for t in assistant.registry.tools()]
 
-    def _options(self, assistant: "Assistant", server, allowed: list[str]):
+    def _options(self, assistant: "Assistant", server, allowed: list[str], query: str = ""):
         import warnings
 
         from claude_agent_sdk import CanUseToolShadowedWarning, ClaudeAgentOptions, PermissionResultDeny
@@ -172,8 +174,7 @@ class ClaudeAgentBackend:
             # Сюда попадают только инструменты вне allowed_tools — их запрещаем всегда.
             return PermissionResultDeny(message=f"Инструмент {tool_name} Джарвису недоступен.")
 
-        facts = assistant.memory.facts()
-        block = ("Что ты знаешь о пользователе:\n" + "\n".join(f"- {f}" for f in facts)) if facts else ""
+        block = assistant.memory.context_for(query)
         self.work_dir.mkdir(parents=True, exist_ok=True)
         return ClaudeAgentOptions(
             tools=[], allowed_tools=allowed, mcp_servers={"jarvis": server}, strict_mcp_config=True,
@@ -188,7 +189,7 @@ class ClaudeAgentBackend:
         from claude_agent_sdk import (AssistantMessage, ClaudeSDKClient, ResultMessage, StreamEvent,
                                       TextBlock)
         server, allowed = self._build_tools(assistant, state)
-        options = self._options(assistant, server, allowed)
+        options = self._options(assistant, server, allowed, text)
         factory = self._client_factory or ClaudeSDKClient
         stream = SentenceStream(lambda s: on_sentence(s) is not False) if on_sentence else None
         parts: list[str] = []

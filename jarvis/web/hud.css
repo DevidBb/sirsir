@@ -164,6 +164,12 @@ a { color: var(--cyan); }
 .mem-list li { display: flex; gap: 8px; align-items: flex-start; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 14px; }
 .mem-list li span { flex: 1; overflow-wrap: anywhere; }
 .mem-list li .link-btn.del { color: var(--red); }
+.kind { font: 11px var(--mono); padding: 0 6px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.kind.preference { color: var(--amber); border-color: rgba(255, 181, 71, .4); }
+.kind.task { color: var(--violet); border-color: rgba(180, 140, 255, .4); }
+.inline-form select { background: rgba(5, 8, 13, .6); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px; }
+#memFound:empty { display: none; }
+#memFound { margin: 8px 0; }
 .log-list li { font: 11px/1.4 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
 .tool-list li { font-size: 13px; padding: 4px 0; border-bottom: 1px dashed var(--line); }
 .tool-list code { font: 12px var(--mono); color: var(--cyan); }

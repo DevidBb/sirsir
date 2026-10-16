@@ -486,17 +486,19 @@ class Assistant:
             return Reply(self.confirmations.request("очистить всю долговременную память", clear))
         return None
 
-    def _system_prompt(self) -> str:
-        facts = self.memory.facts()
-        block = ""
-        if facts:
-            block = "Что ты знаешь о пользователе:\n" + "\n".join(f"- {f}" for f in facts)
-        return SYSTEM_PROMPT.format(name=self.name, facts=block)
+    def _system_prompt(self, query: str = "") -> str:
+        return SYSTEM_PROMPT.format(name=self.name, facts=self.memory.context_for(query))
+
+    def remember_task(self, request: str, answer: str, tools: list[str]) -> None:
+        """Итог многошаговой задачи — в память (видно и удаляется во вкладке «Память»)."""
+        if tools and answer and self.config.get("memory.task_summaries", True):
+            self.memory.add_task(request, answer, sorted(set(tools)))
 
     def _ask_llm(self, text: str, on_sentence: Callable[[str], bool] | None = None) -> Reply:
         self.emergency.reset()
         self.conversation.begin_turn(text)
         seen_calls: set[str] = set()
+        used_tools: list[str] = []
         spoken = False
         try:
             def guarded(sentence: str) -> bool:
@@ -505,7 +507,7 @@ class Assistant:
 
             for _ in range(self.max_tool_calls + 1):
                 stream = SentenceStream(guarded) if on_sentence else None
-                message = self.llm.chat(self.conversation.messages(self._system_prompt()),
+                message = self.llm.chat(self.conversation.messages(self._system_prompt(text)),
                                         tools=self.registry.schemas(),
                                         on_text=stream.feed if stream else None)
                 if self.emergency.active:
@@ -529,6 +531,7 @@ class Assistant:
                     self.conversation.end_turn()
                     if not answer:
                         return Reply("Не знаю, что ответить.")
+                    self.remember_task(text, answer, used_tools)
                     return Reply(answer, spoken=spoken and stream is not None and bool(stream.spoken))
 
                 self.conversation.add({"role": "assistant", "content": message.get("content", ""),
@@ -549,6 +552,7 @@ class Assistant:
                     seen_calls.add(key)
 
                     outcome = self._run_tool(name, args)
+                    used_tools.append(name)
                     if isinstance(outcome, Reply):  # нужно подтверждение
                         self.conversation.add({"role": "tool", "tool_name": name,
                                                "content": "Ожидает подтверждения пользователя."})

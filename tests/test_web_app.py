@@ -158,3 +158,17 @@ def test_status_lists_tools_and_checks(server):
 def test_screenshot_path_traversal(server):
     client, _, _ = server
     assert client.get("/api/screenshots/..%2F..%2Fconfig.toml").status_code == 404
+
+
+def test_memory_search_kinds_and_tasks(server):
+    client, app, _ = server
+    client.post("/api/memory/facts", json={"text": "Отвечай коротко", "kind": "preference"})
+    tid = app.memory.add_task("найди видео про котов", "нашёл 5 видео", ["youtube_search"])
+    found = client.get("/api/memory", params={"q": "коты видео"}).json()["found"]
+    assert found[0]["kind"] == "task"
+    data = client.get("/api/memory").json()
+    assert data["facts"][0]["kind"] == "preference" and data["tasks"][0]["id"] == tid
+    fid = data["facts"][0]["id"]
+    assert client.put(f"/api/memory/facts/{fid}", json={"text": "Отвечай коротко", "kind": "fact"}).json()["ok"]
+    assert app.memory.list_facts()[0]["kind"] == "fact"
+    assert client.delete(f"/api/memory/tasks/{tid}").json()["ok"] and app.memory.list_tasks() == []

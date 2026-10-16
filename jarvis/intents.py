@@ -125,6 +125,11 @@ EN_YT_RE = re.compile(r"^(?:open youtube and )?(?:search|find|look up|look for|s
                       r"|^(?:search|find|look up) (?P<q2>.+) on youtube$")
 EN_WEB_RE = re.compile(r"^(?:google|search the web for|search the internet for|search online for|"
                        r"look up online|find online|search for) (?P<q>.+)$")
+# «Запомни, что я люблю короткие ответы», «remember that my name is David».
+REMEMBER_RE = re.compile(r"^\s*(?:(?:привет|джарвис|слушай)[\s,!.]+)*(?:запомни|запомните|запиши в память|"
+                         r"remember)[\s,:]+(?:(?:что|that)[\s,:]+)?(?P<f>\S.*)$", re.I | re.S)
+PREFERENCE_RE = re.compile(r"\b(?:предпочита|люблю|не люблю|нравится|не нравится|удобнее|хочу чтобы|"
+                           r"всегда|никогда|обычно|отвечай|говори|пиши|prefer|always|never|i like|i don)", re.I)
 # «Посмотри на экран и скажи, что за ошибка», «что у меня на экране», «look at my screen».
 LOOK_SCREEN_RE = re.compile(
     r"^(?:посмотри|глянь|взгляни|смотри)(?: на)? (?:мой |наш )?экран\b"
@@ -198,6 +203,11 @@ class IntentMatcher:
         reminder = self._match_reminder(norm)
         if reminder is not None:
             return reminder
+        m = REMEMBER_RE.match(text)
+        if m and not norm.startswith(("запомни где", "запомни когда")):
+            fact = m.group("f").strip().rstrip(".!")
+            kind = "preference" if PREFERENCE_RE.search(fact) else "fact"
+            return Intent("remember_fact", {"fact": fact[:1].upper() + fact[1:], "kind": kind})
         m = NOTE_RE.match(norm)
         if m:
             # Текст заметки берём из исходной фразы, чтобы сохранить регистр и знаки.

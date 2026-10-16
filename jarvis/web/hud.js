@@ -312,8 +312,20 @@
     if (!r.ok) throw new Error(`${r.status}`);
     return r.json();
   }
+  const KIND_TITLES = { fact: "факт", preference: "предпочтение", note: "заметка", task: "задача" };
   function memItem(kind, item, editable) {
     const li = document.createElement("li");
+    if (item.kind) {
+      const k = document.createElement("span"); k.className = "kind " + item.kind; k.textContent = KIND_TITLES[item.kind] || item.kind;
+      if (kind === "facts") {
+        k.title = "Нажмите, чтобы сменить тип"; k.style.cursor = "pointer";
+        k.onclick = async () => {
+          await api(`/api/memory/facts/${item.id}`, { method: "PUT", body: JSON.stringify({ text: item.text, kind: item.kind === "fact" ? "preference" : "fact" }) });
+          loadMemory();
+        };
+      }
+      li.appendChild(k);
+    }
     const span = document.createElement("span"); span.textContent = item.text;
     li.appendChild(span);
     if (editable) {
@@ -342,17 +354,28 @@
       };
       fill("facts", "facts", m.facts, true);
       fill("notes", "notes", m.notes, false);
+      fill("tasks", "tasks", m.tasks || [], false, (t) => ({ id: t.id, kind: "task", text: `${new Date(t.created_at * 1000).toLocaleString()} — ${t.request} → ${t.result}` }));
       fill("reminders", "reminders", m.reminders, false, (r) => ({ id: r.id, text: `${new Date(r.due_at * 1000).toLocaleString()} — ${r.text}` }));
       const al = $("actions"); al.innerHTML = "";
       (m.actions || []).forEach(a => { const li = document.createElement("li"); li.textContent = a; al.appendChild(li); });
     } catch (e) { addSystem("Не удалось загрузить память: " + e.message, true); }
   }
   $("memRefresh").onclick = loadMemory;
+  const KIND_TABLES = { fact: "facts", preference: "facts", note: "notes", task: "tasks" };
+  $("memSearchForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const q = $("memSearch").value.trim();
+    const ul = $("memFound"); ul.innerHTML = "";
+    if (!q) return;
+    const r = await api("/api/memory?q=" + encodeURIComponent(q));
+    if (!r.found.length) { const li = document.createElement("li"); li.className = "muted"; li.textContent = "ничего не найдено"; ul.appendChild(li); return; }
+    r.found.forEach(f => ul.appendChild(memItem(KIND_TABLES[f.kind], f, false)));
+  };
   $("factForm").onsubmit = async (e) => {
     e.preventDefault();
     const text = $("factInput").value.trim();
     if (!text) return;
-    const res = await api("/api/memory/facts", { method: "POST", body: JSON.stringify({ text }) });
+    const res = await api("/api/memory/facts", { method: "POST", body: JSON.stringify({ text, kind: $("factKind").value }) });
     if (!res.ok) alert(res.error); else $("factInput").value = "";
     loadMemory();
   };

@@ -75,13 +75,20 @@
         <h3>Что я помню</h3>
         <button class="link-btn" id="memRefresh">обновить</button>
       </div>
+      <form class="inline-form" id="memSearchForm">
+        <input id="memSearch" placeholder="Поиск по памяти" maxlength="200">
+        <button class="btn">Найти</button>
+      </form>
+      <ul class="mem-list" id="memFound"></ul>
       <form class="inline-form" id="factForm">
         <input id="factInput" placeholder="Добавить факт или предпочтение" maxlength="300">
+        <select id="factKind"><option value="fact">факт</option><option value="preference">предпочтение</option></select>
         <button class="btn">Запомнить</button>
       </form>
       <p class="muted small">Пароли, токены и номера карт не сохраняются.</p>
       <ul class="mem-list" id="facts"></ul>
       <h3>Заметки</h3><ul class="mem-list" id="notes"></ul>
+      <h3>Итоги задач</h3><ul class="mem-list" id="tasks"></ul>
       <h3>Напоминания</h3><ul class="mem-list" id="reminders"></ul>
       <h3>Журнал действий</h3><ul class="log-list" id="actions"></ul>
     </div>

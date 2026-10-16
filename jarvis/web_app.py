@@ -285,7 +285,11 @@ def create_app(runtime: Runtime, port: int):
         reminders = [{"id": r[0], "text": r[1], "kind": r[2], "due_at": r[3]} for r in
                      mem.execute("SELECT id, text, kind, due_at FROM reminders WHERE done = 0 "
                                  "ORDER BY due_at")]
+        q = request.query_params.get("q", "").strip()
+        if q:
+            return JSONResponse({"query": q, "found": mem.search(q, 30)})
         return JSONResponse({"facts": mem.list_facts(), "notes": notes, "reminders": reminders,
+                             "tasks": mem.list_tasks(),
                              "settings": mem.all_settings(), "actions": _tail_actions(app_core.config)})
 
     async def memory_item(request: Request):
@@ -299,6 +303,8 @@ def create_app(runtime: Runtime, port: int):
                 ok = mem.delete_fact(item_id)
             elif kind == "notes":
                 ok = mem.modify("DELETE FROM notes WHERE id = ?", (item_id,)) > 0
+            elif kind == "tasks":
+                ok = mem.modify("DELETE FROM task_log WHERE id = ?", (item_id,)) > 0
             elif kind == "reminders":
                 ok = mem.modify("UPDATE reminders SET done = 1 WHERE id = ?", (item_id,)) > 0
             else:
@@ -307,7 +313,7 @@ def create_app(runtime: Runtime, port: int):
         body = await request.json()
         if kind != "facts":
             return JSONResponse({"error": "только факты можно редактировать"}, status_code=400)
-        ok = mem.update_fact(item_id, str(body.get("text", "")))
+        ok = mem.update_fact(item_id, str(body.get("text", "")), body.get("kind"))
         return JSONResponse({"ok": ok, "error": None if ok else
                              "пусто или похоже на секрет (пароль, токен) — не сохраняю"})
 
@@ -315,7 +321,7 @@ def create_app(runtime: Runtime, port: int):
         if (resp := guard(request)) is not None:
             return resp
         body = await request.json()
-        ok = app_core.memory.add_fact(str(body.get("text", "")))
+        ok = app_core.memory.add_fact(str(body.get("text", "")), str(body.get("kind", "fact")))
         return JSONResponse({"ok": ok, "error": None if ok else
                              "пусто, уже есть или похоже на секрет — не сохраняю"})
 
