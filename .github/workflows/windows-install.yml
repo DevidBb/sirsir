@@ -3,6 +3,17 @@ name: Windows installer
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "install.bat"
+      - "requirements*.txt"
+      - "scripts/download_models.py"
+      - "scripts/check_components.py"
+      - "scripts/hud_smoke.py"
+      - "jarvis/**"
+      - "skills/**"
+      - "config.toml"
+      - ".github/workflows/windows-install.yml"
   push:
     branches: [main]
     paths:
