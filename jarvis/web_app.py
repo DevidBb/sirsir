@@ -49,10 +49,16 @@ class Hub:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.clients: set[asyncio.Queue] = set()
         self.history: deque[dict] = deque(maxlen=history)
+        self.listeners: list[Any] = []  # подписчики в процессе (значок в трее)
         self._lock = threading.Lock()
 
     def publish(self, event: dict) -> None:
         event = {**event, "ts": time.time()}
+        for listener in self.listeners:
+            try:
+                listener(event)
+            except Exception:  # noqa: BLE001 — значок не должен мешать HUD
+                log.debug("Подписчик событий", exc_info=True)
         with self._lock:
             if event.get("type") not in ("delta",):
                 self.history.append(event)
@@ -537,6 +543,25 @@ def create_app(runtime: Runtime, port: int):
             return JSONResponse({"error": "not found"}, status_code=404)
         return FileResponse(path)
 
+    async def autostart_api(request: Request):
+        """Запуск при входе в Windows: HUD с голосом в трее (файл в папке «Автозагрузка»)."""
+        if (resp := guard(request)) is not None:
+            return resp
+        from . import autostart
+        if request.method == "POST":
+            on = bool((await request.json()).get("on"))
+            try:
+                await asyncio.to_thread(autostart.enable if on else autostart.disable)
+            except OSError as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+            log.info("Автозапуск: %s", "включён" if on else "выключен")
+        try:
+            folder = str(autostart.startup_dir())
+        except OSError as e:
+            return JSONResponse({"ok": True, "supported": False, "enabled": False, "error": str(e)})
+        return JSONResponse({"ok": True, "supported": True, "enabled": autostart.is_enabled(),
+                             "folder": folder})
+
     async def system(request: Request):
         """Загрузка процессора, памяти и видеокарты для верхней панели (только настоящие значения)."""
         if (resp := guard(request)) is not None:
@@ -655,6 +680,7 @@ def create_app(runtime: Runtime, port: int):
         Route("/api/audio/test", audio_test, methods=["POST"]),
         Route("/api/audio/speak", audio_speak, methods=["POST"]),
         Route("/api/system", system),
+        Route("/api/autostart", autostart_api, methods=["GET", "POST"]),
         Route("/api/update", update_api),
         Route("/api/update/check", update_check, methods=["POST"]),
         Route("/api/update/apply", update_apply, methods=["POST"]),
@@ -707,7 +733,8 @@ def start_voice(core: Any, hub: Hub) -> None:
     threading.Thread(target=worker, name="voice", daemon=True).start()
 
 
-def run(config: Config, app_factory, open_browser: bool | None = None, voice: bool = False) -> int:
+def run(config: Config, app_factory, open_browser: bool | None = None, voice: bool = False,
+        tray: bool = False) -> int:
     import uvicorn
     host = str(config.get("web.host", "127.0.0.1"))
     port = int(config.get("web.port", 8765))
@@ -734,15 +761,35 @@ def run(config: Config, app_factory, open_browser: bool | None = None, voice: bo
     server = uvicorn.Server(uvicorn.Config(web, host=host, port=port, log_level="warning",
                                            timeout_graceful_shutdown=5))
     runtime.on_exit = lambda: setattr(server, "should_exit", True)
+    icon = start_tray(runtime, url) if tray else None
     try:
         server.run()
     finally:
+        if icon is not None:
+            icon.stop()
         if runtime.update_checker is not None:
             runtime.update_checker.stop()
         runtime.stop()
         core.quit()
         core.close()
     return runtime.exit_code
+
+
+def start_tray(runtime: Runtime, url: str):
+    """Значок-глаз в трее: щелчок открывает HUD, цвет — состояние, напоминания — уведомлением."""
+    import webbrowser
+    from .tray import Tray, follow_hud
+    core = runtime.app
+
+    def is_muted() -> bool:
+        return bool(core.voice_active and core.mic is not None and core.mic.muted)
+    icon = Tray(toggle_mic=lambda: runtime.voice_command("mic", is_muted()), is_muted=is_muted,
+                emergency_stop=runtime.cancel, quit_app=lambda: runtime.request_exit(0),
+                open_ui=lambda: webbrowser.open(url), mic_available=lambda: core.voice_active, look="hud")
+    if not icon.start():
+        return None
+    runtime.hub.listeners.append(follow_hud(icon, is_muted))
+    return icon
 
 
 def start_updates(runtime: Runtime, config: Config) -> None:

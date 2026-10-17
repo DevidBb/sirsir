@@ -620,7 +620,7 @@
     if (t.dataset.tab === "memory") loadMemory();
     if (t.dataset.tab === "schedule") loadSchedules();
     if (t.dataset.tab === "settings" || t.dataset.tab === "diag") refreshStatus();
-    if (t.dataset.tab === "diag") { loadAudio(); if (!levelTimer) pollLevel(); }
+    if (t.dataset.tab === "diag") { loadAudio(); loadAutostart(); if (!levelTimer) pollLevel(); }
   });
 
   // ---------- память ----------
@@ -830,7 +830,34 @@
     row(true, false, `Микрофон браузера: ${Rec ? "распознавание браузера (облако Google)" : "недоступно в этом браузере"}; озвучивание: ${window.speechSynthesis ? "голоса системы" : "нет"}`);
     applyUpdateInfo(s.update);
   }
-  $("diagRefresh").onclick = () => { refreshStatus(); loadAudio(); };
+  $("diagRefresh").onclick = () => { refreshStatus(); loadAudio(); loadAutostart(); };
+
+  // ---------- запуск при входе в Windows ----------
+  const AUTOSTART_NOTE = "Джарвис запустится с голосом и значком в трее; HUD открывается щелчком по значку.";
+  function showAutostart(a) {
+    const box = $("autostartToggle");
+    box.disabled = !a.supported;
+    box.checked = !!a.enabled;
+    $("autostartNote").textContent = a.supported ? AUTOSTART_NOTE : "Доступно только в Windows: " + (a.error || "");
+  }
+  async function loadAutostart() {
+    try { showAutostart(await api("/api/autostart")); } catch (e) { /* сервер перезапускается */ }
+  }
+  $("autostartToggle").onchange = async () => {
+    const box = $("autostartToggle");
+    box.disabled = true;
+    try {
+      const r = await fetch("/api/autostart", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ on: box.checked }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || String(r.status));
+      showAutostart(d);
+      addSystem(d.enabled ? "Автозапуск включён: Джарвис будет запускаться при входе в Windows." : "Автозапуск выключен.");
+    } catch (e) {
+      addSystem("Автозапуск не изменён: " + e.message, true);
+      loadAutostart();
+    }
+  };
 
   function renderSkills(list) {
     const ul = $("skills"); ul.innerHTML = "";

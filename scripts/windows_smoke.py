@@ -103,6 +103,21 @@ def _():
     return f"папка автозагрузки: {autostart.startup_dir()}"
 
 
+@check("значок HUD в трее (pystray): показать, сменить состояние, убрать")
+def _():
+    from jarvis.tray import Tray
+    icon = Tray(lambda: None, lambda: False, lambda: None, lambda: None,
+                open_ui=lambda: None, look="hud")
+    assert icon.start(), "значок не создан"
+    try:
+        time.sleep(1.5)
+        icon.set_state("thinking")
+        icon.set_state("idle")
+        return f"значок показан: {icon.title(icon.state)}"
+    finally:
+        icon.stop()
+
+
 @check("запуск Блокнота, поиск окна, свернуть, закрыть")
 def _():
     import pygetwindow

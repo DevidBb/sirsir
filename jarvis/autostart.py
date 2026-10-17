@@ -1,8 +1,10 @@
 """Автозапуск при входе в Windows через папку «Автозагрузка» текущего пользователя.
 
 Права администратора и реестр не нужны: в папку кладётся маленький
-JARVIS.cmd, который запускает run.bat свёрнутым и со значком в трее.
-Включается и выключается только вручную: python -m jarvis --autostart on|off.
+JARVIS.cmd, который запускает HUD с голосом (run_web.bat) свёрнутым, со значком в трее
+и без новой вкладки браузера — HUD открывается щелчком по значку.
+Включается и выключается только вручную: переключатель в HUD («Система») или
+python -m jarvis --autostart on|off.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ def script_text(project_root: Path) -> str:
     return ("@echo off\r\n"
             "chcp 65001 >nul\r\n"
             f'cd /d "{project_root}"\r\n'
-            'start "JARVIS" /min cmd /c run.bat --tray\r\n')
+            'start "JARVIS" /min cmd /c run_web.bat --tray --no-open\r\n')
 
 
 def enable(project_root: Path = PROJECT_ROOT, folder: Path | None = None) -> Path:

@@ -340,3 +340,51 @@ def test_compose_from_hud_chat_returns_text_to_copy(server):
     assert reply["data"] == {"kind": "draft", "text": "Привет! Я Джарвис."}
     assert reply["pending_confirmation"] is False
     assert app.assistant.channel == "hud"
+
+
+def test_hub_listener_errors_do_not_break_publishing():
+    hub = Hub()
+    seen = []
+
+    def bad(event):
+        raise RuntimeError("значок упал")
+    hub.listeners += [bad, seen.append]
+    hub.publish({"type": "state", "state": "idle"})
+    assert seen[0]["type"] == "state" and hub.history[-1]["type"] == "state"
+
+
+def test_autostart_api(server, tmp_path, monkeypatch):
+    from jarvis import autostart
+    client, _, _ = server
+    folder = tmp_path / "Startup"
+    monkeypatch.setattr(autostart, "startup_dir", lambda: folder)
+    assert client.get("/api/autostart").json() == {"ok": True, "supported": True, "enabled": False,
+                                                   "folder": str(folder)}
+    r = client.post("/api/autostart", json={"on": True}).json()
+    assert r["enabled"] is True and "run_web.bat --tray" in (folder / "JARVIS.cmd").read_text(encoding="utf-8")
+    assert client.post("/api/autostart", json={"on": False}).json()["enabled"] is False
+    assert client.post("/api/autostart", json={"on": True}, headers={"origin": "http://evil.example"}).status_code == 403
+    assert not (folder / "JARVIS.cmd").exists()
+
+
+def test_autostart_api_outside_windows(server, monkeypatch):
+    client, _, _ = server
+    monkeypatch.delenv("APPDATA", raising=False)
+    data = client.get("/api/autostart").json()
+    assert data["supported"] is False and "APPDATA" in data["error"]
+
+
+def test_tray_follows_runtime_and_quits(server, monkeypatch):
+    pytest.importorskip("PIL")
+    import sys
+    from test_tray_autostart import FakePystray
+    from jarvis.web_app import start_tray
+    _, _, runtime = server
+    monkeypatch.setitem(sys.modules, "pystray", FakePystray)
+    stopped = []
+    runtime.on_exit = lambda: stopped.append(1)
+    icon = start_tray(runtime, "http://127.0.0.1:8765/")
+    runtime.set_state("acting", "youtube_search")
+    assert icon.state == "acting"
+    next(i for i in icon._icon.menu.items if getattr(i, "text", "") == "Выход").action()
+    assert runtime.exit_code == 0 and stopped == [1]

@@ -722,7 +722,7 @@ def main(argv: list[str] | None = None) -> int:
                 core.controller.open_url = core.browser.open_from_other_thread
             return core
         return web_app.run(config, build, open_browser=False if args.no_open else None,
-                           voice=args.voice)
+                           voice=args.voice, tray=args.tray)
     app = App(config, voice, tray=args.tray)
     try:
         app.run_voice() if voice else app.run_text()
