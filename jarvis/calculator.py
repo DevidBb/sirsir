@@ -85,6 +85,7 @@ _WORD_OPS = [
     (r"\bминус\b|\bотнять\b", "-"),
     (r"\bв квадрате\b", "**2"),
     (r"\bв кубе\b", "**3"),
+    (r"\bв (\d+)(?:-?(?:й|ой|ей))? степени\b", r"** \1"),   # «2 в 10 степени»
     (r"\bв степени\b", "**"),
 ]
 _PERCENT_OF = re.compile(r"^([\d.,]+)\s*(?:%|процент(?:а|ов)?)\s+от\s+([\d.,]+)$")
@@ -118,7 +119,7 @@ def phrase_to_expression(phrase: str) -> str | None:
     if m:
         return f"sqrt({m.group(1)})"
     for pattern, op in _WORD_OPS:
-        t = re.sub(pattern, f" {op} ", t)
+        t = re.sub(pattern, f" {op} ", t)  # op может ссылаться на группу: «** \1»
     t = re.sub(r"\s+", "", t).replace(",", ".")
     if not re.fullmatch(r"[\d.+\-*/()]+", t) or not re.search(r"\d", t) or not re.search(r"[+\-*/]", t):
         return None

@@ -98,6 +98,9 @@ def say_duration(seconds: int, nominative: bool = False) -> str:
     return " ".join(parts)
 
 
+DAY_OFFSETS = {"сегодня": 0, "завтра": 1, "послезавтра": 2}
+
+
 def next_time_of_day(hhmm: str, now: _dt.datetime) -> _dt.datetime | None:
     m = re.fullmatch(r"(\d{1,2})[:. ](\d{2})", hhmm.strip())
     if not m:
@@ -133,15 +136,24 @@ class Reminders:
             return f"Таймер на {say_duration(delay_seconds)} запущен."
         return f"Напомню через {say_duration(delay_seconds)}: {text}."
 
-    def add_at(self, text: str, hhmm: str) -> str:
+    def add_at(self, text: str, hhmm: str, day: str | None = None) -> str:
+        """day — «сегодня», «завтра», «послезавтра»; без него — ближайшее такое время."""
         now = _dt.datetime.fromtimestamp(self.clock())
         due = next_time_of_day(hhmm, now)
         if due is None:
             return f"Не понял время «{hhmm}»."
+        if day:
+            if day not in DAY_OFFSETS:
+                return f"Не понял день «{day}»: скажите сегодня, завтра или послезавтра."
+            date = now.date() + _dt.timedelta(days=DAY_OFFSETS[day])
+            due = _dt.datetime.combine(date, due.time())
+            if due <= now:
+                return f"{day.capitalize()} в {due:%H:%M} уже прошло."
         result = self.add(text, int((due - now).total_seconds()))
         if result.startswith("Напомню"):
-            day = "сегодня" if due.date() == now.date() else "завтра"
-            return f"Напомню {day} в {due:%H:%M}: {text}."
+            offset = (due.date() - now.date()).days
+            when = {0: "сегодня", 1: "завтра", 2: "послезавтра"}.get(offset, f"{due:%d.%m}")
+            return f"Напомню {when} в {due:%H:%M}: {text}."
         return result
 
     def pending(self) -> list[tuple[int, str, str, float]]:
@@ -221,7 +233,9 @@ class Reminders:
             self._tool_reminder,
             {"text": Param("string", "О чём напомнить", max_length=200),
              "minutes": Param("integer", "Через сколько минут", required=False),
-             "at_time": Param("string", "Время в формате HH:MM", required=False, max_length=5)}))
+             "at_time": Param("string", "Время в формате HH:MM", required=False, max_length=5),
+             "day": Param("string", "День для at_time; без него — ближайшее такое время", required=False,
+                          enum=list(DAY_OFFSETS))}))
         registry.register(Tool(
             "list_reminders", "Перечислить активные напоминания и таймеры",
             lambda: self.describe_pending()))
@@ -231,9 +245,10 @@ class Reminders:
             {"fragment": Param("string", "Фрагмент текста; пусто — все", required=False,
                                max_length=100)}))
 
-    def _tool_reminder(self, text: str, minutes: int | None = None, at_time: str | None = None) -> str:
+    def _tool_reminder(self, text: str, minutes: int | None = None, at_time: str | None = None,
+                       day: str | None = None) -> str:
         if at_time:
-            return self.add_at(text, at_time)
+            return self.add_at(text, at_time, day)
         if minutes:
             return self.add(text, int(minutes) * 60)
         return "Скажите, через сколько минут или во сколько напомнить."

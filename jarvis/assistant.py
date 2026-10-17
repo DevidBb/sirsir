@@ -21,7 +21,7 @@ from typing import Any, Callable
 from .config import Config
 from .dictation import Dictation
 from .fuzzy import similarity
-from .intents import HOTKEY_PHRASES, Intent, IntentMatcher
+from .intents import ACTION_CHAIN_RE, HOTKEY_PHRASES, Intent, IntentMatcher
 from .llm import (SYSTEM_PROMPT, Conversation, LLMError, OllamaClient, SentenceStream,
                   looks_like_tool_text)
 from .memory import Memory
@@ -97,33 +97,100 @@ COMPOSITE_RE = re.compile(
     re.I | re.S)
 TYPE_AFTER_RE = re.compile(r"^(?:напиши|напечатай|набери|введи|впиши)\s+(?!в\s)(?P<t>\S.*)$",
                            re.I | re.S)
-# Признаки многошаговой задачи: такой «поиск» отдаём модели, а не быстрой команде.
-COMPLEX_RE = re.compile(
-    r"\b(?:сравн|сопостав|проанализ|анализ|вывод|резюм|итог|объясн|прочита|прочти|изуч|выбер|"
-    r"расскаж|перескаж|составь|напиши|оцени|проверь|открой|зайди|потом|затем|после этого|"
-    r"погод|температур|градус|прогноз|новост|актуальн|текущ|последн|свеж|"
-    r"курс валют|сколько стоит|цена|цены|завтра|сегодняшн|сейчас|"
-    r"продолжи|продолжай|подробнее|выполни|дальше|теперь сделай|сделай это|на основе этого|"
-    r"compare|summar|analy|conclu|explain|read|review|then|after that|continue|next step|do that|"
+# Гибрид: куда отдать реплику, которую не выполнила быстрая команда (см. hybrid_route).
+# Свежие данные: локальная модель их не знает — Claude ищет в интернете.
+FRESH_RE = re.compile(
+    r"\b(?:погод|температур|градус|прогноз|новост|актуальн|текущ|последн|свеж|"
+    r"курс\w* (?:валют|доллар|евро|рубл|юан|биткоин|крипт)|биткоин|акци[ия] |"
+    r"сколько стоит|цена|цены|цену|стоимост|сегодня|сейчас|завтра|послезавтра|кто выиграл|"
+    r"дожд|снег|гроз|осадк|зонт|на улице|когда выйдет|когда выходит|вышел ли|вышла ли|вышло ли|"
+    r"дата выхода|релиз|анонс|новинк|что пишут|что говорят про|в этом месяце|на этой неделе|"
+    r"до \d+\s*(?:тыс|к\b|руб|₽|\$|доллар|евро)|вчера|выиграл ли|проиграл ли|счет матча|счёт матча|"
+    r"билет|дешев|дешёв|скидк|распродаж|в наличии|где купить|из нового|что нового|новый сезон|"
+    r"новые (?:фильм|сериал|сери|игр|выпуск)|следующ\w* (?:недел|выходн|месяц)|"
     r"weather|forecast|temperature|degrees|news|latest|current|tomorrow|today|price|currency|"
-    r"exchange rate|stock price|look up|research|sources|based on that|execute|run it)\w*", re.I)
-
+    r"exchange rate|stock price|who won)\w*", re.I)
+# Многошаговые задачи, действия на сайтах и в файлах, длинный разбор.
+HEAVY_RE = re.compile(
+    r"\b(?:сравн|сопостав|проанализ|анализ|вывод|резюм|итог|прочита|прочти|изуч|выбер|перескаж|"
+    r"составь|распиши|оцени|проверь|открой|зайди|потом|затем|после этого|"
+    r"подробн|поподробн|детальн|развёрнут|развернут|пошагов|по шагам|стоит ли|отзыв|"
+    r"код|кода|коде|скрипт|программу|программы|функцию|эссе|статью|статья|реферат|сочинени|"
+    r"закажи|забронируй|купи|оформи|зарегистрируй|запишись|краткое содержание|суммируй|выжимк|"
+    r"обоснуй|аргументируй|эт(?:у|ой|а) страниц|на странице|по ссылке|эт(?:от|ом) сайт|"
+    r"эт(?:у|ой) стать|эт(?:о|ого|ом) видео|"
+    r"продолжи|продолжай|дальше|выполни|теперь сделай|сделай это|на основе этого|"
+    r"compare|summar|analy|conclu|read|review|then|after that|continue|next step|do that|"
+    r"in detail|step by step|look up|research|sources|based on that|execute|run it)\w*", re.I)
+# «Найди … и скажи/выбери …», «… и отправь в телеграм» — несколько шагов в одной фразе.
+CHAIN_RE = re.compile(
+    r"\b(?:найди|поищи|узнай|выясни|посмотри|прочитай|открой)\b.*?(?:,|\bи\b|\bпотом\b|\bзатем\b)\s*"
+    r"(?:скажи|расскажи|ответь|дай|выбери|посоветуй|сравни|опиши|объясни|оцени|обоснуй)\b", re.I | re.S)
+# Продолжение разговора: идёт той же модели, что ответила перед этим.
+FOLLOWUP_START_RE = re.compile(r"^(?:а|и|ну|так|тогда|and|but|so)\b", re.I)
+FOLLOWUP_WORDS_RE = re.compile(
+    r"\b(?:подробнее|поподробнее|дальше|продолжи|продолжай|ещё|еще|другой|другую|другие|другое|"
+    r"иначе|короче|проще|точнее|уточни|поясни|сократи|перефразируй|more|again|another|shorter|"
+    r"simpler|continue|go on)\b", re.I)
+FOLLOWUP_SOLO = {"почему", "зачем", "как", "why", "how"}
+FOLLOWUP_WINDOW = 600.0  # секунд: позже реплика — уже новый разговор
 
 # Только настоящие многошаговые инструкции должны обходить быстрый поиск.
 MULTISTEP_RE = re.compile(
     r"\b(?:сравн|сопостав|проанализ|анализ|вывод|резюм|итог|объясн|прочита|прочти|изуч|выбер|"
-    r"расскаж|перескаж|составь|оцени|проверь|compare|summar|analy|conclu|explain|read|review|"
+    r"расскаж|перескаж|составь|оцени|проверь|скажи|посоветуй|стоит ли|"
+    r"compare|summar|analy|conclu|explain|read|review|"
     r"then|after that|based on that|sources)\w*", re.I)
 
 
 def is_complex_request(query: str) -> bool:
-    """Запросу нужны свежие данные или более сильная модель."""
-    return bool(COMPLEX_RE.search(query)) or len(query.split()) > 14
+    """Запросу нужны свежие данные, несколько шагов или длинный разбор."""
+    return (needs_fresh_data(query) or bool(HEAVY_RE.search(query) or CHAIN_RE.search(query)
+                                            or ACTION_CHAIN_RE.search(query)) or len(query.split()) > 14)
+
+
+def is_followup(query: str) -> bool:
+    """«А подробнее?», «давай ещё», «продолжай» — короткое продолжение прошлого ответа."""
+    words = re.findall(r"\w+", query.lower())
+    if not words or len(words) > 6:
+        return False
+    if FOLLOWUP_START_RE.match(query.strip()) or (len(words) == 1 and words[0] in FOLLOWUP_SOLO):
+        return True
+    return len(words) <= 4 and bool(FOLLOWUP_WORDS_RE.search(query))
+
+
+# «Что мне сегодня приготовить», «мне сейчас скучно» — время про самого человека, а не про мир.
+PERSONAL_TIME_RE = re.compile(
+    r"\b(?:мне|я|меня|нам|мы)\s+(?:сегодня|сейчас|завтра|вчера)\b|"
+    r"\b(?:сегодня|сейчас|завтра)\s+(?:приготовить|поесть|съесть|сделать|заняться|надеть|почитать|"
+    r"послушать|поиграть)\b", re.I)
+TIME_WORDS = ("сегодня", "сейчас", "завтра", "послезавтра", "вчера")
+
+
+def needs_fresh_data(query: str) -> bool:
+    """Нужны данные из интернета (погода, новости, цены, результаты, «сейчас» о мире)."""
+    hits = [m.group(0).lower() for m in FRESH_RE.finditer(query)]
+    if hits and PERSONAL_TIME_RE.search(query):
+        hits = [h for h in hits if not h.startswith(TIME_WORDS)]
+    return bool(hits)
+
+
+def hybrid_route(query: str, last: str | None = None) -> tuple[str, str]:
+    """Гибрид: ("claude" | "local", причина). last — кто отвечал на прошлую реплику (недавно)."""
+    if needs_fresh_data(query):
+        return "claude", "нужны свежие данные"
+    if last in ("claude", "local") and is_followup(query):
+        return last, "продолжение разговора"
+    if CHAIN_RE.search(query) or ACTION_CHAIN_RE.search(query) or HEAVY_RE.search(query):
+        return "claude", "многошаговая задача"
+    if len(query.split()) > 14:
+        return "claude", "длинный запрос"
+    return "local", "короткий вопрос"
 
 
 def is_multistep_request(query: str) -> bool:
     """Явный поиск можно выполнить сразу; анализ нескольких источников — через модель."""
-    return bool(MULTISTEP_RE.search(query)) or len(query.split()) > 14
+    return bool(MULTISTEP_RE.search(query) or CHAIN_RE.search(query)) or len(query.split()) > 14
 
 
 LEAD_WORDS_RE = re.compile(r"^\s*(?:(?:привет|здравствуй|слушай|эй|окей|ок|джарвис)[\s,!.]+)+",
@@ -178,6 +245,7 @@ class Assistant:
         self.dictation = dictation or Dictation()
         self._pending_choice: tuple[Choice, float] | None = None
         self.clock = time.monotonic
+        self._last_route: tuple[str, float] | None = None  # гибрид: кто ответил последним и когда
         # Наблюдатель событий (интерфейс): {"type": "tool_start" | "tool_end" | ...}.
         self.on_event: Callable[[dict], None] = lambda event: None
         # Внешний агент (Claude Agent SDK) вместо цикла Ollama, см. providers.py.
@@ -280,22 +348,32 @@ class Assistant:
             # Гибрид: локальная Qwen отвечает на обычные короткие вопросы; Claude
             # получает многошаговые задачи и запросы, где важна актуальная информация.
             # Быстрые команды уже обработаны раньше в _quick_intent и сюда не попадают.
-            if provider != "hybrid" or is_complex_request(text):
+            target, reason = "claude", ""
+            if provider == "hybrid":
+                last = self._last_route
+                recent = last is not None and self.clock() - last[1] < FOLLOWUP_WINDOW
+                target, reason = hybrid_route(text, last[0] if recent else None)
+                self.emit({"type": "route", "target": target, "reason": reason})
+                log.info("Гибрид: %s (%s)", target, reason)
+            if target == "claude":
                 reply = self.agent_backend.run(self, text, on_sentence)
                 if (provider == "hybrid" and not reply.ok and reply.action != STOP
                         and not self.emergency.active):
                     log.warning("Claude не выполнил задачу; переключаюсь на локальную Ollama.")
                     self.emit({"type": "notice", "text": "Claude недоступен — пробую локальную модель Ollama."})
+                    self._last_route = ("local", self.clock())
                     return self._ask_llm(text, on_sentence)
+                self._last_route = ("claude", self.clock())
                 return reply
         # Если Claude SDK не установлен в режиме hybrid, локальная модель остаётся рабочей.
+        self._last_route = ("local", self.clock())
         return self._ask_llm(text, on_sentence)
 
     def run_unattended(self, prompt: str) -> Reply:
         """Плановая задача: отдельный диалог, без подтверждений, контекст пользователя не трогается."""
         from .schedules import UNATTENDED_NOTE
         backend = self.agent_backend
-        saved = (self.conversation, getattr(backend, "session_id", None), self.active_skill)
+        saved = (self.conversation, getattr(backend, "session_id", None), self.active_skill, self._last_route)
         self.conversation = Conversation(self.conversation.max_turns)
         if backend is not None:
             backend.session_id = None
@@ -310,7 +388,7 @@ class Assistant:
             return self._ask_model(UNATTENDED_NOTE + task)
         finally:
             self.unattended = False
-            self.conversation, session, self.active_skill = saved
+            self.conversation, session, self.active_skill, self._last_route = saved
             if backend is not None:
                 backend.session_id = session
 
@@ -642,6 +720,7 @@ class Assistant:
             return Reply("Завершаю работу. До свидания.", EXIT, expect_followup=False)
         if self._matches(text, "reset_dialog"):
             self.conversation.clear()
+            self._last_route = None
             return Reply("Начинаем новый диалог.")
         if self._matches(text, "clear_memory"):
             def clear() -> str:

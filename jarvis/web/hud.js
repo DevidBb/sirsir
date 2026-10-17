@@ -73,6 +73,7 @@
       case "cancelled": hideConfirm(); timelineAdd("fail", "Задача остановлена", ""); stopSpeech(); break;
       case "notice": addSystem(ev.text); if (ev.reminder) speak(ev.text); break;
       case "skill": timelineAdd("task", "Навык: " + ev.name, ev.description || "", "", ev.ts); break;
+      case "route": timelineEvent(ev); break;
       case "delegate": timelineAdd("task", "Поручение агенту " + (AGENT_TEXT[ev.agent] || ev.agent), ev.text || "", "", ev.ts); break;
     }
   }
@@ -244,7 +245,10 @@
       else timelineAdd(ev.ok ? "ok" : "fail", name, text, "", ev.ts);
     } else if (ev.type === "confirm") timelineAdd("warn", "Нужно подтверждение", ev.action || "", "", ev.ts);
     else if (ev.type === "cancelled") timelineAdd("fail", "Задача остановлена", "", "", ev.ts);
+    else if (ev.type === "route") timelineAdd("task", ROUTE_TEXT[ev.target] || ev.target, ev.reason || "", "", ev.ts);
   }
+  // Гибридный режим: кто отвечает на реплику и почему.
+  const ROUTE_TEXT = { claude: "Модель: Claude · облако", local: "Модель: Ollama · локально" };
 
   // ---------- подтверждения ----------
   function showConfirm(text) { $("confirmText").textContent = text; $("confirmBar").hidden = false; }
