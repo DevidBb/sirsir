@@ -165,6 +165,13 @@ def test_open_websites_by_name_and_address(ctl):
     assert ctl.launched == []
 
 
+@pytest.mark.parametrize("spoken", ["YouTube", "you tube", "ютюб", "ютубе"])
+def test_open_website_by_spoken_variant(ctl, spoken):
+    # Whisper пишет «YouTube» латиницей; нечёткое сравнение с «ютуб» его не ловило.
+    assert ctl.open_anything(spoken) == "Открываю ютуб."
+    assert ctl.opened == ["https://www.youtube.com"]
+
+
 def test_open_user_folders_and_files(ctl, config, tmp_path):
     base = Path(config.get("windows.search.allowed_dirs")[0])
     (base / "Отчёты").mkdir()

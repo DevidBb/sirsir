@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .app_finder import (DEFAULT_URL_SCHEMES, KNOWN_SITES, SEARCH_SITES, Shortcut, StartMenuIndex,
-                         is_risky_file, parse_lnk, parse_url_file, search_url, site_url,
+                         is_risky_file, parse_lnk, parse_url_file, search_url, site_alias, site_url,
                          unsafe_target_reason, url_scheme_allowed)
 from .config import Config
 from .fuzzy import similarity
@@ -280,6 +280,10 @@ class WindowsController:
             return [(1.01, host, lambda: self._open_url(host, url))]
         out: list[Candidate] = []
         for table in (self.websites, KNOWN_SITES):
+            key = site_alias(name, table)
+            if key:  # «YouTube», «ютюбе» — точно этот сайт
+                out.append((1.0, f"сайт {key}", lambda k=key, a=table[key]: self._open_url(k, a)))
+                continue
             for key, address in table.items():
                 score = similarity(name, key) + (0.005 if table is self.websites else 0)
                 if score >= SITE_THRESHOLD:

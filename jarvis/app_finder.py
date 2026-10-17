@@ -210,6 +210,36 @@ KNOWN_SITES = {
     "стек оверфлоу": "https://stackoverflow.com", "дзен": "https://dzen.ru",
     "телеграм веб": "https://web.telegram.org", "ватсап веб": "https://web.whatsapp.com",
 }
+# Как Whisper и Vosk записывают названия сайтов → имя из config.toml/KNOWN_SITES.
+# Нечёткое сравнение их не ловит: «youtube» похоже на «ютуб» только на 0.83.
+SITE_ALIASES = {
+    "youtube": "ютуб", "you tube": "ютуб", "ютюб": "ютуб", "ютьюб": "ютуб", "ю туб": "ютуб",
+    "github": "гитхаб", "git hub": "гитхаб", "гит хаб": "гитхаб",
+    "wikipedia": "википедия", "вики": "википедия",
+    "chat gpt": "чатгпт", "чат джипити": "чатгпт", "чат гпт": "чатгпт", "чат жпт": "чатгпт",
+    "vk": "вконтакте", "яндекс почта": "почта яндекс", "google": "гугл", "yandex": "яндекс",
+    "habr": "хабр", "twitch": "твич", "reddit": "реддит", "rutube": "рутуб", "avito": "авито",
+    "ozon": "озон", "wildberries": "вайлдберриз", "валберис": "вайлдберриз", "вб": "вайлдберриз",
+    "stackoverflow": "стек оверфлоу", "stack overflow": "стек оверфлоу",
+}
+
+
+def site_alias(name: str, table: dict[str, str]) -> str | None:
+    """Ключ таблицы сайтов для произнесённого названия: «YouTube», «ютюбе», «википедию»."""
+    from .fuzzy import similarity
+    from .security import normalize
+    q = normalize(name)
+    alias = SITE_ALIASES.get(q)
+    for key in table:
+        if normalize(key) == alias:
+            return key
+    # Падежи и мелкие ошибки распознавания: «ютубе», «википедию». Только для слов подлиннее —
+    # у коротких имён («икс», «вк») один звук меняет смысл.
+    if len(q) >= 4:
+        best = max(table, key=lambda k: similarity(q, k), default=None)
+        if best is not None and similarity(q, best) >= 0.9:
+            return best
+    return None
 
 # «отчёт.docx» — это файл, а не сайт.
 FILE_EXTENSIONS = {"doc", "docx", "xls", "xlsx", "ppt", "pptx", "pdf", "txt", "rtf", "odt", "csv",

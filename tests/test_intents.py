@@ -14,6 +14,10 @@ def m():
 @pytest.mark.parametrize("phrase,intent", [
     ("Открой блокнот", Intent("open_app", {"name": "блокнот"})),
     ("Откроет Ютуб", Intent("open_website", {"name": "ютуб"})),
+    ("Открой YouTube.", Intent("open_website", {"name": "ютуб"})),
+    ("открой ютюб", Intent("open_website", {"name": "ютуб"})),
+    ("открой ютубе", Intent("open_website", {"name": "ютуб"})),
+    ("открой ютуб музыку", Intent("open_anything", {"name": "ютуб музыку"})),
     ("запусти диспетчер задач", Intent("open_app", {"name": "диспетчер задач"})),
     ("пожалуйста, открой мне приложение блокнот", Intent("open_app", {"name": "блокнот"})),
     ("открой сайт ютуб", Intent("open_website", {"name": "ютуб"})),

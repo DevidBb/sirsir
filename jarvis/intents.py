@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from .app_finder import FILE_EXTENSIONS, SEARCH_SITE_RE
+from .app_finder import FILE_EXTENSIONS, SEARCH_SITE_RE, site_alias
 from .calculator import phrase_to_expression
 from .reminders import parse_duration
 from .security import normalize
@@ -260,7 +260,7 @@ class IntentMatcher:
             app = _lookup(target, self.apps)
             if app:
                 return Intent("open_app", {"name": app})
-            site = _lookup(target, self.websites)
+            site = _lookup(target, self.websites) or site_alias(target, self.websites)
             if site:
                 return Intent("open_website", {"name": site})
             folder = _lookup(target, self.folders)
