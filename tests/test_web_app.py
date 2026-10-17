@@ -304,3 +304,28 @@ def test_update_apply_restarts_with_code_75(server):
         ev, _ = receive_until(ws, "restarting")
     assert stopped.wait(5), "сервер не получил команду завершиться"
     assert runtime.exit_code == RESTART_EXIT_CODE
+
+
+def test_system_gauges_are_real_or_absent(server):
+    client, _, _ = server
+    data = client.get("/api/system").json()
+    assert set(data) == {"cpu", "ram_used", "ram_total", "gpu"}
+    assert client.get("/api/system", headers={"origin": "http://evil.example"}).status_code == 403
+
+
+def test_gpu_parsing_and_cache():
+    from jarvis.sysinfo import SystemMonitor, parse_gpu
+    assert parse_gpu("NVIDIA GeForce RTX 3060, 34, 5321, 12288\n") == {
+        "name": "NVIDIA GeForce RTX 3060", "util": 34.0, "mem_used": 5321 / 1024, "mem_total": 12.0}
+    assert parse_gpu("") is None and parse_gpu("Error: no devices") is None
+    calls, now = [], [0.0]
+
+    def smi():
+        calls.append(1)
+        return "GPU, 10, 1024, 2048"
+    mon = SystemMonitor(gpu_ttl=5, run_smi=smi, clock=lambda: now[0])
+    assert mon.gpu()["util"] == 10.0 and mon.gpu()["mem_total"] == 2.0
+    assert len(calls) == 1          # кэш: не чаще раза в 5 с
+    now[0] = 6
+    mon.gpu()
+    assert len(calls) == 2

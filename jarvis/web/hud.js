@@ -12,9 +12,18 @@
     browser_back: "Назад", browser_tabs: "Вкладки", browser_switch_tab: "Переключаю вкладку",
     browser_close_tab: "Закрываю вкладку", browser_screenshot: "Снимок страницы",
     open_website: "Открываю сайт", look_at_screen: "Смотрю на экран", screen_screenshot: "Снимок экрана", open_app: "Запускаю программу", web_search: "Поиск на сайте",
+    open_anything: "Открываю", open_folder: "Открываю папку", open_file: "Открываю файл", fetch_page: "Читаю страницу",
+    calculate: "Считаю", current_time: "Смотрю время", system_info: "Состояние компьютера", media_control: "Музыка и громкость",
+    set_timer: "Ставлю таймер", set_reminder: "Ставлю напоминание", list_reminders: "Напоминания", cancel_reminders: "Отменяю напоминания",
+    add_note: "Записываю заметку", read_notes: "Читаю заметки", search_notes: "Ищу в заметках", delete_last_note: "Удаляю заметку", clear_notes: "Очищаю заметки",
+    remember_fact: "Запоминаю", forget_fact: "Забываю", search_memory: "Ищу в памяти", change_setting: "Меняю настройку", set_voice: "Меняю голос",
+    files_list: "Смотрю папку", files_read: "Читаю файл", files_search: "Ищу в файлах", files_write: "Записываю файл", files_edit: "Правлю файл",
+    search_files: "Ищу файлы", delete_file: "Удаляю в корзину", list_windows: "Окна", close_window: "Закрываю окно", lock_screen: "Блокирую экран",
+    schedule_task: "Планирую задачу", list_schedules: "Плановые задачи", cancel_schedule: "Отменяю плановую задачу", use_skill: "Навык",
+    shutdown_computer: "Выключение", restart_computer: "Перезагрузка", sleep_computer: "Сон", cancel_shutdown: "Отмена выключения",
   };
 
-  let ws = null, reconnectDelay = 500, uiState = "idle", uiVersion = null;
+  let ws = null, reconnectDelay = 500, uiState = "idle", uiVersion = null, replayed = false;
   const bubbles = new Map();   // task -> {el, text}
   const toolRows = [];         // незавершённые шаги
   let speaking = false;
@@ -34,9 +43,8 @@
     return false;
   }
   function setConn(ok) {
-    const b = $("connBadge");
-    b.textContent = ok ? "связь есть" : "нет связи";
-    b.className = "badge " + (ok ? "ok" : "bad");
+    $("connDot").classList.toggle("on", ok);
+    $("connText").textContent = ok ? "" : "нет связи";
   }
 
   // ---------- события ----------
@@ -49,11 +57,18 @@
         setState(ev.state || "idle");
         setProvider(ev.provider);
         applyVoice(ev.voice);
-        (ev.history || []).slice(-60).forEach(h => { if (h.type !== "state") timelineEvent(h, true); });
+        // История сервера: при переподключении заменяет «Шаги» (без повторов); после перезапуска
+        // сервера она пуста — тогда остаётся то, что уже показано.
+        if ((ev.history || []).length) {
+          $("timeline").innerHTML = "";
+          ev.history.slice(-60).forEach(h => { if (h.type !== "state") timelineEvent(h, true); });
+        }
+        if (!replayed) { replayed = true; replayFeed((ev.history || []).slice(-80)); }
         applyUpdateInfo(ev.update);
         break;
       case "update": update.status = ev; renderUpdate(); break;
       case "restarting":
+        restarting = true;
         addSystem("Обновляюсь и перезапускаюсь… Обычно это 10–60 секунд, страница переподключится сама.");
         setState("acting"); $("stateText").textContent = "Перезапуск";
         break;
@@ -83,40 +98,85 @@
     $("statePill").dataset.state = state;
     $("core").dataset.state = state;
     $("stateText").textContent = STATE_TEXT[state] || state;
-    $("stateDetail").textContent = state === "acting" ? (TOOL_TEXT[detail] || detail || "") : (state === "error" ? (detail || "") : "");
-    $("cancelBtn").disabled = state === "idle";
+    $("stateDetail").textContent = state === "acting" ? (TOOL_TEXT[detail] || detail || "")
+      : (state === "error" || state === "idle") ? (detail || "") : "";
+    $("cancelBtn").hidden = !["thinking", "acting", "speaking"].includes(state);
+    $("shutUpBtn").hidden = state !== "speaking";
+    updateHeadline();
+    eyeLevel();
   }
 
+  // Крупная строка слева — то, что Джарвис делает или ждёт прямо сейчас.
+  let restarting = false;
+  function updateHeadline() {
+    const v = serverVoice;
+    $("headline").textContent =
+      restarting ? "Перезапускаюсь." :
+      uiState === "listening" ? "Слушаю." :
+      uiState === "thinking" ? "Думаю над задачей." :
+      uiState === "acting" ? "Выполняю." :
+      uiState === "speaking" ? "Отвечаю." :
+      uiState === "error" ? "Задача не выполнена." :
+      v.enabled && !v.muted ? "Скажите «Джарвис» — я слушаю." :
+      v.enabled ? "Микрофон выключен. Напишите, что сделать." : "Напишите, что сделать.";
+  }
+
+  // Модель: Гибрид / Ollama / Claude — переключатель вверху.
   function setProvider(p) {
-    const b = $("providerBadge");
-    if (p === "claude") { b.textContent = "Claude · облако"; b.className = "badge cloud"; }
-    else if (p === "hybrid") { b.textContent = "Гибрид · локально + Claude"; b.className = "badge cloud"; }
-    else { b.textContent = "Ollama · локально"; b.className = "badge local"; }
+    document.querySelectorAll("#modeSwitch [data-provider]").forEach(b =>
+      b.setAttribute("aria-checked", String(b.dataset.provider === p)));
   }
+  document.querySelectorAll("#modeSwitch [data-provider]").forEach(b => b.onclick = async () => {
+    if (b.getAttribute("aria-checked") === "true") return;
+    try {
+      await api("/api/settings", { method: "POST", body: JSON.stringify({ provider: b.dataset.provider }) });
+      setProvider(b.dataset.provider);
+      refreshStatus();
+    } catch (e) { addSystem("Не удалось переключить модель: " + e.message, true); }
+  });
 
-  // ---------- чат ----------
+  // ---------- разговор ----------
   function scrollChat() { const c = $("chat"); c.scrollTop = c.scrollHeight; }
-  function addUser(text, byVoice) {
-    const el = document.createElement("div");
-    el.className = "msg user";
-    el.innerHTML = `<div class="who">${byVoice ? "Вы · голос" : "Вы"}</div><div class="body"></div>`;
-    el.querySelector(".body").textContent = text;
-    $("chat").appendChild(el); scrollChat();
+  function hhmm(d) { return (d || new Date()).toTimeString().slice(0, 5); }
+  function entry(kind, who, ts) {
+    const el = document.createElement("article");
+    el.className = "entry " + kind;
+    if (who) {
+      const head = document.createElement("div"); head.className = "who";
+      const name = document.createElement("span"); name.textContent = who;
+      const t = document.createElement("time"); t.textContent = hhmm(ts ? new Date(ts * 1000) : undefined);
+      head.append(name, t); el.appendChild(head);
+    }
+    const body = document.createElement("div"); body.className = "body";
+    el.appendChild(body);
+    $("chat").appendChild(el);
+    return el;
+  }
+  function addUser(text, byVoice, ts) {
+    entry("user", byVoice ? "Вы сказали" : "Вы написали", ts).querySelector(".body").textContent = text;
+    scrollChat();
+  }
+  // Разговор до открытия страницы (голосом или в другой вкладке) — из истории сервера.
+  function replayFeed(history) {
+    history.forEach(h => {
+      if (h.type === "task") addUser(h.text, h.source === "voice", h.ts);
+      else if (h.type === "reply" && !h.ignored && h.text) {
+        const el = entry("jarvis" + (h.ok === false ? " error" : ""), "Джарвис", h.ts);
+        const listed = h.data && (h.data.kind === "youtube" || h.data.kind === "web");
+        el.querySelector(".body").innerHTML = md.render(listed ? h.text.split("\n")[0] : h.text);
+        if (h.data) el.appendChild(renderData(h.data));
+      }
+    });
+    scrollChat();
   }
   function addSystem(text, error) {
-    const el = document.createElement("div");
-    el.className = "msg system" + (error ? " error" : "");
-    el.textContent = text;
-    $("chat").appendChild(el); scrollChat();
+    entry("system" + (error ? " error" : ""), "").querySelector(".body").textContent = text;
+    scrollChat();
   }
   function bubble(task) {
     let b = bubbles.get(task);
     if (!b) {
-      const el = document.createElement("div");
-      el.className = "msg assistant streaming";
-      el.innerHTML = `<div class="who">Джарвис</div><div class="body"></div>`;
-      $("chat").appendChild(el);
-      b = { el, text: "" };
+      b = { el: entry("jarvis streaming", "Джарвис"), text: "" };
       bubbles.set(task, b);
     }
     return b;
@@ -154,33 +214,38 @@
   function renderData(data) {
     const wrap = document.createElement("div");
     if (data.kind === "youtube" || data.kind === "web") {
-      wrap.className = "cards";
+      // Номера настоящие: «открой второй результат» открывает №2.
+      const list = document.createElement("ol");
+      list.className = "results-list";
       (data.items || []).forEach((it, i) => {
-        const c = document.createElement("div");
-        c.className = "card";
-        const num = document.createElement("div"); num.className = "num"; num.textContent = String(i + 1).padStart(2, "0");
+        const c = document.createElement("li");
+        c.className = "result";
+        const num = document.createElement("span"); num.className = "num"; num.textContent = String(i + 1);
         const title = document.createElement("div"); title.className = "title"; title.appendChild(link(it.url, it.title));
         const meta = document.createElement("div"); meta.className = "meta";
-        meta.textContent = data.kind === "youtube"
-          ? [it.channel, it.duration, it.views, it.published].filter(Boolean).join(" · ")
-          : (it.source || "");
+        (data.kind === "youtube" ? [it.channel, it.duration, it.views, it.published] : [it.source])
+          .filter(Boolean).forEach(x => { const s = document.createElement("span"); s.textContent = x; meta.appendChild(s); });
         const snip = document.createElement("div"); snip.className = "snippet";
         snip.textContent = data.kind === "youtube" ? (it.description || "") : (it.snippet || "");
         const acts = document.createElement("div"); acts.className = "acts";
         const open = document.createElement("button"); open.className = "link-btn"; open.type = "button";
-        open.textContent = data.kind === "youtube" ? "▶ открыть у Джарвиса" : "→ открыть у Джарвиса";
+        open.textContent = "Открыть у Джарвиса";
         open.onclick = () => send({ type: "tool", name: "open_result", args: { index: i + 1 } });
         acts.appendChild(open);
-        c.append(num, title, meta, snip, acts);
-        wrap.appendChild(c);
+        c.append(num, title);
+        if (meta.childNodes.length) c.appendChild(meta);
+        if (snip.textContent) c.appendChild(snip);
+        c.appendChild(acts);
+        list.appendChild(c);
       });
+      wrap.appendChild(list);
     } else if (data.kind === "screenshot" || data.kind === "screen") {
       const img = document.createElement("img"); img.className = "shot";
       img.alt = data.kind === "screen" ? "Снимок экрана" : "Снимок страницы";
       img.src = "/api/screenshots/" + encodeURIComponent(data.file);
       wrap.appendChild(img);
     } else if (data.kind === "page" || data.kind === "opened") {
-      wrap.className = "meta small";
+      wrap.className = "opened";
       wrap.appendChild(link(data.url, data.title || data.url));
     } else if ((data.kind === "diff" || data.kind === "file_changed") && data.diff) {
       // Изменение файла: до подтверждения — открыто, после записи — свёрнуто.
@@ -206,7 +271,8 @@
     const box = $("results");
     box.innerHTML = "";
     const h = document.createElement("h3");
-    h.textContent = data.kind === "youtube" ? `YouTube: ${data.query}` : data.kind === "web" ? `Поиск: ${data.query} (${data.engine})` : data.kind === "screen" ? "Снимок экрана" : "Снимок страницы";
+    h.textContent = data.kind === "youtube" ? `Видео по запросу «${data.query}»`
+      : data.kind === "web" ? `Поиск «${data.query}»` : data.kind === "screen" ? "Снимок экрана" : "Снимок страницы";
     box.append(h, renderData(data));
   }
 
@@ -245,10 +311,11 @@
       else timelineAdd(ev.ok ? "ok" : "fail", name, text, "", ev.ts);
     } else if (ev.type === "confirm") timelineAdd("warn", "Нужно подтверждение", ev.action || "", "", ev.ts);
     else if (ev.type === "cancelled") timelineAdd("fail", "Задача остановлена", "", "", ev.ts);
-    else if (ev.type === "route") timelineAdd("task", ROUTE_TEXT[ev.target] || ev.target, ev.reason || "", "", ev.ts);
+    else if (ev.type === "route") timelineAdd("route", ROUTE_TEXT[ev.target] || ev.target, ROUTE_WHERE[ev.target] + (ev.reason || ""), "", ev.ts);
   }
   // Гибридный режим: кто отвечает на реплику и почему.
-  const ROUTE_TEXT = { claude: "Модель: Claude · облако", local: "Модель: Ollama · локально" };
+  const ROUTE_TEXT = { claude: "Отвечает Claude", local: "Отвечает Ollama" };
+  const ROUTE_WHERE = { claude: "в облаке: ", local: "на этом компьютере: " };
 
   // ---------- подтверждения ----------
   function showConfirm(text) { $("confirmText").textContent = text; $("confirmBar").hidden = false; }
@@ -275,6 +342,10 @@
     if (!v) return;
     serverVoice = v;
     $("listenBtn").hidden = !v.enabled;
+    $("input").placeholder = v.enabled ? "Скажите «Джарвис» или напишите здесь" : "Напишите, что сделать";
+    $("core").setAttribute("aria-label", v.enabled ? (v.muted ? "Включить микрофон" : "Слушать") : (Rec ? "Голосовой ввод" : "Написать команду"));
+    updateHeadline();
+    eyeLevel();
     // Локальный голос сам озвучивает ответы — озвучка браузера дала бы второй голос.
     $("ttsToggle").closest("label").hidden = !!v.enabled;
     if (v.enabled) stopSpeech();
@@ -289,6 +360,28 @@
     }
   }
   $("listenBtn").onclick = () => { stopSpeech(); send({ type: "listen" }); };
+  // Глаз — главная кнопка голоса: слушать без «Джарвис» (или включить микрофон).
+  $("core").onclick = () => {
+    if (serverVoice.enabled) {
+      if (serverVoice.muted) send({ type: "mic", on: true });
+      else { stopSpeech(); send({ type: "listen" }); }
+    } else if (Rec) $("micBtn").click();
+    else $("input").focus();
+  };
+  // Пока Джарвис слушает, глаз светится в такт настоящему уровню микрофона.
+  let eyeLoop = false;
+  function eyeLevel() {
+    if (uiState === "listening" && serverVoice.enabled) { if (!eyeLoop) { eyeLoop = true; pollEye(); } }
+    else $("core").style.setProperty("--lvl", "0");
+  }
+  async function pollEye() {
+    if (!(uiState === "listening" && serverVoice.enabled)) { eyeLoop = false; $("core").style.setProperty("--lvl", "0"); return; }
+    try {
+      const l = await api("/api/audio/level");
+      $("core").style.setProperty("--lvl", String(l.active && !l.muted ? Math.min(1, l.level / 0.25) : 0));
+    } catch (e) { /* сервер перезапускается */ }
+    setTimeout(pollEye, 120);
+  }
 
   if (!Rec) {
     $("micBtn").disabled = true;
@@ -334,6 +427,53 @@
   function stopSpeech() { if (window.speechSynthesis) speechSynthesis.cancel(); if (speaking) { speaking = false; setState("idle"); } }
   $("shutUpBtn").onclick = () => { if (serverVoice.enabled) send({ type: "shut_up" }); stopSpeech(); };
 
+  // ---------- верхняя панель: часы, загрузка компьютера, тема ----------
+  function greetingText(h) {
+    return h >= 5 && h < 12 ? "Доброе утро." : h >= 12 && h < 17 ? "Добрый день." : h >= 17 && h < 23 ? "Добрый вечер." : "Доброй ночи.";
+  }
+  function tick() {
+    const d = new Date();
+    $("clock").textContent = hhmm(d);
+    $("clock").dateTime = d.toISOString();
+    $("clock").title = d.toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long" });
+    $("greeting").textContent = greetingText(d.getHours());
+  }
+  const num1 = (n) => n.toFixed(1).replace(".", ",");
+  function gauge(box, value, text, hot, title) {
+    $(box).hidden = text == null;
+    if (text == null) return;
+    $(value).textContent = text;
+    $(box).classList.toggle("hot", !!hot);
+    $(box).title = title || "";
+  }
+  async function pollSystem() {
+    if (document.visibilityState === "visible") {
+      try {
+        const s = await api("/api/system");
+        gauge("gCpu", "sysCpu", s.cpu == null ? null : `${Math.round(s.cpu)}%`, s.cpu >= 90, "Загрузка процессора");
+        gauge("gRam", "sysRam", s.ram_used == null ? null : `${num1(s.ram_used)} из ${Math.round(s.ram_total)} ГБ`,
+          s.ram_used / s.ram_total > 0.9, "Занятая оперативная память");
+        const g = s.gpu;
+        gauge("gGpu", "sysGpu", g ? `${Math.round(g.util)}%` : null, g && g.util >= 95,
+          g ? `${g.name}: видеопамять ${num1(g.mem_used)} из ${num1(g.mem_total)} ГБ` : "");
+      } catch (e) { /* сервер перезапускается */ }
+    }
+    setTimeout(pollSystem, 3000);
+  }
+  function applyTheme(t) {
+    document.documentElement.dataset.theme = t;
+    const next = t === "blue" ? "Красная тема" : "Синяя тема";
+    $("themeBtn").title = next;
+    $("themeBtn").setAttribute("aria-label", next);
+  }
+  $("themeBtn").onclick = () => {
+    const t = document.documentElement.dataset.theme === "blue" ? "red" : "blue";
+    applyTheme(t);
+    store("jarvis.theme", t);
+  };
+  // Быстрые команды — те же фразы, что можно сказать или написать.
+  document.querySelectorAll("#chips [data-say]").forEach(b => b.onclick = () => send({ type: "message", text: b.dataset.say }));
+
   // ---------- обновления ----------
   // Сервер проверяет обновления сам (git fetch при запуске и раз в несколько часов) и шлёт
   // событие update; «Обновить и перезапустить» работает, когда HUD запущен через run_web.bat.
@@ -367,7 +507,7 @@
     const st = update.status, avail = !!(st && st.available);
     $("updateBadge").hidden = !avail;
     if (avail) {
-      $("updateBadge").textContent = `Обновление · ${st.behind}`;
+      $("updateBadge").textContent = `Обновление (${st.behind})`;
       const head = st.commits && st.commits.length ? st.commits[0].sha : String(st.behind);
       if (store("jarvis.update.notified") !== head) {
         store("jarvis.update.notified", head);
@@ -633,6 +773,10 @@
       t.querySelector(".pnote").textContent = note + "." + extra;
       d.append(r, t); pv.appendChild(d);
     });
+    const claude = document.querySelector('#modeSwitch [data-provider="claude"]');
+    claude.disabled = !s.provider.claude.available && s.provider.active !== "claude";
+    claude.title = s.provider.claude.available ? "Все вопросы к модели — Claude (облако Anthropic)"
+      : "Claude недоступен: " + s.provider.claude.note;
     renderSkills(s.skills || []);
     const tl = $("tools"); tl.innerHTML = "";
     s.tools.forEach(t => {
@@ -742,6 +886,11 @@
     $("audioResult").textContent = r.ok ? `Говорю: ${r.speaker}` : r.error;
   };
 
+  applyTheme(document.documentElement.dataset.theme === "blue" ? "blue" : "red");
+  tick();
+  setInterval(tick, 5000);
+  addSystem("Например: «Открой YouTube и найди видео про локальных ИИ-ассистентов» или «Найди в интернете, что такое MCP, и сравни два источника».");
   setState("idle");
   connect();
+  pollSystem();
 })();

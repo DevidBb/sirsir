@@ -32,11 +32,18 @@
   function render(text) {
     const lines = esc(String(text || "")).split(/\r?\n/);
     const out = [];
-    let para = [], list = null, tbl = [];
+    let para = [], list = null, tbl = [], code = null;
     const flushPara = () => { if (para.length) { out.push("<p>" + inline(para.join("<br>")) + "</p>"); para = []; } };
     const flushList = () => { if (list) { out.push(`<${list.tag}>` + list.items.map(i => `<li>${inline(i)}</li>`).join("") + `</${list.tag}>`); list = null; } };
     const flushTable = () => { if (tbl.length) { out.push(table(tbl)); tbl = []; } };
     for (const raw of lines) {
+      // Блок кода ```…```: строки как есть (уже экранированы), без разметки внутри.
+      if (/^\s*```/.test(raw)) {
+        if (code === null) { flushPara(); flushList(); flushTable(); code = []; }
+        else { out.push("<pre><code>" + code.join("\n") + "</code></pre>"); code = null; }
+        continue;
+      }
+      if (code !== null) { code.push(raw); continue; }
       const line = raw.trimEnd();
       if (/^\s*\|.*\|\s*$/.test(line)) { flushPara(); flushList(); tbl.push(line); continue; }
       flushTable();
@@ -48,6 +55,7 @@
       flushList();
       para.push(line);
     }
+    if (code !== null) out.push("<pre><code>" + code.join("\n") + "</code></pre>");  // не закрыт — всё равно код
     flushPara(); flushList(); flushTable();
     return out.join("");
   }

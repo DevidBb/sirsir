@@ -95,6 +95,13 @@ def main() -> int:
     args = parser.parse_args()
     port = args.port
 
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
+            check(False, f"порт {port} свободен", "занят — остался процесс от прошлой проверки или другой Джарвис")
+            return 1
+    except OSError:
+        pass
+
     # Отдельная копия проекта для данных: memory.db, журналы, профиль браузера — не пользовательские.
     work = Path(tempfile.mkdtemp(prefix="jarvis-hud-smoke-"))
     config = (ROOT / "config.toml").read_text(encoding="utf-8")
@@ -112,7 +119,10 @@ def main() -> int:
            "--no-open", "--skip-check"]
     print("Запуск:", " ".join(cmd), flush=True)
     log_out = open(work / "server.log", "w", encoding="utf-8")
-    proc = subprocess.Popen(cmd, cwd=ROOT, env=env, stdout=log_out, stderr=subprocess.STDOUT)
+    # Своя группа процессов: в конце остановим и супервизор, и запущенного им Джарвиса.
+    group = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
+             else {"start_new_session": True})
+    proc = subprocess.Popen(cmd, cwd=ROOT, env=env, stdout=log_out, stderr=subprocess.STDOUT, **group)
     try:
         if not check(wait_port(port, proc, 120), "сервер HUD запустился", f"порт {port}"):
             return finish(proc, work, log_out, args.keep_data)
@@ -174,10 +184,43 @@ def main() -> int:
         text = (reply or {}).get("text", "")
         check(reply is not None and bool(text), "сложный запрос: ответ модели или честная ошибка", text[:100])
 
+        screenshots(port)
         restart_after_update(port, proc)
     finally:
         code = finish(proc, work, log_out, args.keep_data)
     return code
+
+
+def screenshots(port: int) -> None:
+    """Снимки HUD с настоящими шрифтами системы — в data/hud-*.png (артефакт CI)."""
+    out = ROOT / "data"
+    out.mkdir(exist_ok=True)
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(channel="chromium")
+            try:
+                for name, size, action in (("wide", (1440, 900), None), ("blue", (1440, 900), "blue"),
+                                           ("system", (1440, 900), "system"), ("laptop", (1280, 720), None),
+                                           ("phone", (390, 844), None)):
+                    page = browser.new_page(viewport={"width": size[0], "height": size[1]})
+                    page.goto(f"http://127.0.0.1:{port}/")
+                    page.wait_for_timeout(1500)
+                    if action == "blue":
+                        page.click("#themeBtn")
+                    elif action == "system":
+                        page.click('.tab[data-tab="diag"]')
+                        page.wait_for_timeout(2500)
+                    page.wait_for_timeout(300)
+                    page.screenshot(path=str(out / f"hud-{name}.png"), full_page=name == "phone")
+                    if action == "blue":
+                        page.click("#themeBtn")  # тема хранится в браузере — вернуть как было
+                    page.close()
+            finally:
+                browser.close()
+        warn(True, "снимки HUD", ", ".join(sorted(p.name for p in out.glob("hud-*.png"))))
+    except Exception as e:  # noqa: BLE001 — снимки не должны валить проверку
+        warn(False, "снимки HUD", str(e)[:200])
 
 
 def wait_port_closed(port: int, timeout: float) -> bool:
@@ -213,11 +256,21 @@ def restart_after_update(port: int, proc: subprocess.Popen) -> None:
 
 
 def stop_tree(proc: subprocess.Popen) -> None:
-    """Остановить супервизор и запущенного им Джарвиса."""
+    """Остановить супервизор и запущенного им Джарвиса (иначе он займёт порт следующей проверки)."""
     try:
         import psutil
         children = psutil.Process(proc.pid).children(recursive=True)
-    except Exception:  # noqa: BLE001 — процесс уже завершился или нет psutil
+    except ImportError:  # без psutil — вся группа процессов разом
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
+        else:
+            import signal
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        children = []
+    except Exception:  # noqa: BLE001 — процесс уже завершился
         children = []
     for child in children:
         try:

@@ -307,6 +307,8 @@ def create_app(runtime: Runtime, port: int):
     app_core = runtime.app
     hub = runtime.hub
     ui_version = static_version()
+    from .sysinfo import SystemMonitor
+    monitor = SystemMonitor()
 
     def guard(request: Request) -> Response | None:
         if not _same_origin(request.headers, port):
@@ -535,6 +537,12 @@ def create_app(runtime: Runtime, port: int):
             return JSONResponse({"error": "not found"}, status_code=404)
         return FileResponse(path)
 
+    async def system(request: Request):
+        """Загрузка процессора, памяти и видеокарты для верхней панели (только настоящие значения)."""
+        if (resp := guard(request)) is not None:
+            return resp
+        return JSONResponse(await asyncio.to_thread(monitor.snapshot))
+
     # --- обновления ---
     async def update_api(request: Request):
         if (resp := guard(request)) is not None:
@@ -646,6 +654,7 @@ def create_app(runtime: Runtime, port: int):
         Route("/api/audio/device", audio_device, methods=["POST"]),
         Route("/api/audio/test", audio_test, methods=["POST"]),
         Route("/api/audio/speak", audio_speak, methods=["POST"]),
+        Route("/api/system", system),
         Route("/api/update", update_api),
         Route("/api/update/check", update_check, methods=["POST"]),
         Route("/api/update/apply", update_apply, methods=["POST"]),

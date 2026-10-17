@@ -1,86 +1,161 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-theme="red">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>J.A.R.V.I.S.</title>
 <link rel="stylesheet" href="/static/hud.css">
+<script>try { var t = localStorage.getItem("jarvis.theme"); if (t === "blue" || t === "red") document.documentElement.dataset.theme = t; } catch (e) { /* приватный режим */ }</script>
 </head>
 <body>
-<header class="topbar">
-  <div class="brand"><span class="brand-mark"></span>J.A.R.V.I.S.</div>
-  <div class="state-pill" id="statePill" data-state="idle">
-    <span class="dot"></span><span id="stateText">Готов</span><span class="state-detail" id="stateDetail"></span>
+<header class="bar">
+  <div class="mark">
+    <span class="mark-dot" id="connDot" aria-hidden="true"></span>
+    <span class="mark-name">J.A.R.V.I.S.</span>
+    <span class="conn-text" id="connText">нет связи</span>
   </div>
-  <div class="top-actions">
-    <button type="button" class="badge update" id="updateBadge" hidden title="Доступно обновление Джарвиса">Обновление</button>
-    <span class="badge" id="providerBadge" title="Где работает модель">—</span>
-    <span class="badge" id="connBadge">нет связи</span>
+  <div class="modes" id="modeSwitch" role="radiogroup" aria-label="Модель">
+    <button type="button" role="radio" aria-checked="false" data-provider="hybrid" title="Быстрые команды и простые вопросы — на этом компьютере, сложные задачи — Claude">Гибрид</button>
+    <button type="button" role="radio" aria-checked="false" data-provider="ollama" title="Всё на этом компьютере (Ollama)">Ollama</button>
+    <button type="button" role="radio" aria-checked="false" data-provider="claude" title="Все вопросы к модели — Claude (облако Anthropic)">Claude</button>
+  </div>
+  <div class="bar-right">
+    <dl class="gauges" aria-label="Загрузка компьютера">
+      <div class="gauge" id="gCpu" hidden><dt>ЦП</dt><dd id="sysCpu"></dd></div>
+      <div class="gauge" id="gRam" hidden><dt>ОЗУ</dt><dd id="sysRam"></dd></div>
+      <div class="gauge" id="gGpu" hidden><dt>ГП</dt><dd id="sysGpu"></dd></div>
+    </dl>
+    <button type="button" class="update-pill" id="updateBadge" hidden>Обновление</button>
+    <button type="button" class="icon-btn" id="themeBtn" aria-label="Синяя тема" title="Синяя тема">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 3.8a8.2 8.2 0 0 0 0 16.4Z"/></svg>
+    </button>
+    <time class="clock" id="clock"></time>
   </div>
 </header>
 
-<main class="layout">
-  <section class="center">
-    <div class="core" id="core" data-state="idle" aria-hidden="true">
-      <div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div>
-      <div class="core-glow"></div>
-    </div>
+<main class="deck">
+  <section class="feed-col" aria-label="Разговор">
+    <p class="greeting" id="greeting"></p>
+    <h1 class="headline" id="headline">Напишите, что сделать.</h1>
+    <div class="feed" id="chat" aria-live="polite"></div>
+  </section>
 
-    <div class="chat" id="chat" aria-live="polite">
-      <div class="msg system">Напишите команду, например: «Открой YouTube и найди видео про локальных ИИ-ассистентов» или «Найди в интернете, что такое MCP, и сравни два источника».</div>
+  <section class="eye-col" aria-label="Джарвис">
+    <button type="button" class="eye" id="core" data-state="idle" aria-label="Слушать">
+      <svg class="eye-rings" viewBox="0 0 320 320" aria-hidden="true">
+        <defs>
+          <radialGradient id="irisFill" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" class="iris-in"/>
+            <stop offset="100%" class="iris-out"/>
+          </radialGradient>
+        </defs>
+        <circle class="ticks" cx="160" cy="160" r="150"/>
+        <circle class="ticks-major" cx="160" cy="160" r="150"/>
+        <circle class="seam" cx="160" cy="160" r="137"/>
+        <g class="arc arc-a"><circle cx="160" cy="160" r="128"/></g>
+        <g class="arc arc-b"><circle cx="160" cy="160" r="117"/></g>
+        <circle class="iris" cx="160" cy="160" r="104" fill="url(#irisFill)"/>
+        <circle class="iris-seam" cx="160" cy="160" r="94"/>
+      </svg>
+      <span class="eye-core" aria-hidden="true"></span>
+    </button>
+    <div class="state" id="statePill" data-state="idle">
+      <span class="state-text" id="stateText">Готов</span>
+      <span class="state-detail" id="stateDetail"></span>
     </div>
+    <p class="mic-hint" id="micHint"></p>
 
-    <div class="confirm" id="confirmBar" hidden>
-      <div class="confirm-text"><span class="confirm-icon">!</span><span id="confirmText"></span></div>
-      <div class="confirm-actions">
-        <button class="btn danger" id="confirmYes">Подтвердить</button>
-        <button class="btn" id="confirmNo">Отмена</button>
+    <div class="decision" id="confirmBar" hidden role="alertdialog" aria-labelledby="confirmTitle" aria-describedby="confirmText">
+      <p class="decision-title" id="confirmTitle">Нужно ваше решение</p>
+      <p class="decision-text" id="confirmText"></p>
+      <div class="decision-actions">
+        <button type="button" class="btn primary" id="confirmYes">Подтвердить</button>
+        <button type="button" class="btn" id="confirmNo">Отклонить</button>
       </div>
     </div>
 
     <form class="composer" id="composer" autocomplete="off">
-      <button type="button" class="icon-btn" id="micBtn" title="Голосовой ввод (браузер)" aria-pressed="false">
-        <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"/></svg>
+      <button type="button" class="icon-btn" id="micBtn" title="Голосовой ввод" aria-label="Микрофон" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"/></svg>
       </button>
-      <button type="button" class="btn" id="listenBtn" hidden title="Принять голосовую команду без «Джарвис»">Слушать</button>
-      <input id="input" placeholder="Команда для Джарвиса…" maxlength="4000">
-      <button type="submit" class="btn primary" id="sendBtn">Отправить</button>
-      <button type="button" class="btn danger" id="cancelBtn" title="Остановить текущую задачу">Стоп</button>
+      <input id="input" placeholder="Напишите, что сделать" maxlength="4000" aria-label="Команда для Джарвиса">
+      <button type="submit" class="send" id="sendBtn" aria-label="Отправить" title="Отправить">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11h11.6l-4.3-4.3L12.7 5.3 19.4 12l-6.7 6.7-1.4-1.4 4.3-4.3H4v-2Z"/></svg>
+      </button>
     </form>
-    <div class="voice-row">
-      <label class="toggle"><input type="checkbox" id="ttsToggle"> Озвучивать ответы</label>
-      <button type="button" class="link-btn" id="shutUpBtn">Прервать речь</button>
-      <span class="hint" id="micHint"></span>
+    <div class="controls">
+      <button type="button" class="btn quiet" id="listenBtn" hidden title="Принять голосовую команду без «Джарвис»">Слушать</button>
+      <button type="button" class="btn quiet" id="shutUpBtn" hidden>Прервать речь</button>
+      <button type="button" class="btn danger" id="cancelBtn" hidden title="Остановить текущую задачу (Esc)">Стоп</button>
+      <label class="toggle" id="ttsLabel"><input type="checkbox" id="ttsToggle"> Озвучивать ответы</label>
+    </div>
+    <div class="chips" id="chips" aria-label="Быстрые команды">
+      <button type="button" data-say="какая погода завтра">Погода на завтра</button>
+      <button type="button" data-say="расскажи главные новости коротко">Главные новости</button>
+      <button type="button" data-say="посмотри на экран и объясни, что происходит">Что на экране</button>
+      <button type="button" data-say="мои напоминания">Напоминания</button>
+      <button type="button" data-say="открой ютуб">YouTube</button>
+      <button type="button" data-say="новый диалог">Новый разговор</button>
     </div>
   </section>
 
-  <aside class="side">
+  <aside class="side-col" aria-label="Подробности">
     <nav class="tabs" role="tablist">
-      <button class="tab active" data-tab="timeline">Ход задачи</button>
+      <button class="tab active" data-tab="timeline">Шаги</button>
       <button class="tab" data-tab="results">Результаты</button>
       <button class="tab" data-tab="memory">Память</button>
       <button class="tab" data-tab="schedule">Расписание</button>
-      <button class="tab" data-tab="settings">Настройки</button>
-      <button class="tab" data-tab="diag">Диагностика</button>
+      <button class="tab" data-tab="diag">Система</button>
     </nav>
 
     <div class="panel active" id="tab-timeline">
       <ol class="timeline" id="timeline"></ol>
+      <p class="empty" id="timelineEmpty">Здесь появятся шаги задачи: какая модель отвечает, какие инструменты запускаются и чем закончились.</p>
     </div>
 
     <div class="panel" id="tab-results">
-      <div id="results"><p class="muted">Здесь появятся результаты поиска и видео.</p></div>
+      <div id="results"><p class="empty">Здесь появятся результаты поиска, видео и снимки экрана.</p></div>
+    </div>
+
+    <div class="panel" id="tab-memory">
+      <div class="panel-head">
+        <h3>Что я помню</h3>
+        <button class="link-btn" id="memRefresh">Обновить</button>
+      </div>
+      <form class="inline-form" id="memSearchForm">
+        <input id="memSearch" placeholder="Поиск по памяти" maxlength="200" aria-label="Поиск по памяти">
+        <button class="btn">Найти</button>
+      </form>
+      <ul class="mem-list" id="memFound"></ul>
+      <form class="inline-form" id="factForm">
+        <input id="factInput" placeholder="Добавить факт или предпочтение" maxlength="300" aria-label="Новый факт">
+        <select id="factKind" aria-label="Тип"><option value="fact">факт</option><option value="preference">предпочтение</option></select>
+        <button class="btn">Запомнить</button>
+      </form>
+      <p class="note">Пароли, токены и номера карт не сохраняются.</p>
+      <ul class="mem-list" id="facts"></ul>
+      <h3>Заметки</h3><ul class="mem-list" id="notes"></ul>
+      <h3>Итоги задач</h3><ul class="mem-list" id="tasks"></ul>
+      <h3>Напоминания</h3><ul class="mem-list" id="reminders"></ul>
+      <h3>Журнал действий</h3><ul class="log-list" id="actions"></ul>
+      <h3>Перенос памяти</h3>
+      <div class="row">
+        <a class="btn" id="memExport" href="/api/memory/export" download>Скачать копию</a>
+        <label class="btn" for="memImportFile">Загрузить из файла</label>
+        <input type="file" id="memImportFile" accept="application/json,.json" hidden>
+      </div>
+      <p class="note">Импорт только добавляет записи, повторы пропускаются. Плановые задачи из файла приходят выключенными; из настроек переносятся только голос и выбор модели.</p>
     </div>
 
     <div class="panel" id="tab-schedule">
       <div class="panel-head">
         <h3>Плановые задачи</h3>
-        <button class="link-btn" id="schedRefresh">обновить</button>
+        <button class="link-btn" id="schedRefresh">Обновить</button>
       </div>
       <form class="sched-form" id="schedForm">
-        <input id="schedPrompt" placeholder="Что сделать, например: сводка главных новостей тремя пунктами" maxlength="500" required>
-        <div class="sched-row">
-          <select id="schedMode">
+        <input id="schedPrompt" placeholder="Что сделать, например: сводка главных новостей тремя пунктами" maxlength="500" required aria-label="Что сделать">
+        <div class="row">
+          <select id="schedMode" aria-label="Когда">
             <option value="daily">каждый день</option>
             <option value="weekdays">по будням</option>
             <option value="weekends">по выходным</option>
@@ -93,76 +168,48 @@
           <button class="btn primary">Запланировать</button>
         </div>
       </form>
-      <p class="muted small">Задача выполняется без вас: действия с подтверждением (отправка, удаление, изменение файлов) в ней не выполняются — Джарвис сообщит об этом в итоге. Если компьютер был выключен, запуск, пропущенный больше чем на час, не выполняется.</p>
+      <p class="note">Задача выполняется без вас: действия с подтверждением (отправка, удаление, изменение файлов) в ней не выполняются — Джарвис сообщит об этом в итоге. Если компьютер был выключен, запуск, пропущенный больше чем на час, не выполняется.</p>
       <ul class="mem-list" id="schedList"></ul>
       <h3>Последние запуски</h3>
       <ul class="mem-list" id="schedRuns"></ul>
     </div>
 
-    <div class="panel" id="tab-memory">
-      <div class="panel-head">
-        <h3>Что я помню</h3>
-        <button class="link-btn" id="memRefresh">обновить</button>
-      </div>
-      <form class="inline-form" id="memSearchForm">
-        <input id="memSearch" placeholder="Поиск по памяти" maxlength="200">
-        <button class="btn">Найти</button>
-      </form>
-      <ul class="mem-list" id="memFound"></ul>
-      <form class="inline-form" id="factForm">
-        <input id="factInput" placeholder="Добавить факт или предпочтение" maxlength="300">
-        <select id="factKind"><option value="fact">факт</option><option value="preference">предпочтение</option></select>
-        <button class="btn">Запомнить</button>
-      </form>
-      <p class="muted small">Пароли, токены и номера карт не сохраняются.</p>
-      <ul class="mem-list" id="facts"></ul>
-      <h3>Заметки</h3><ul class="mem-list" id="notes"></ul>
-      <h3>Итоги задач</h3><ul class="mem-list" id="tasks"></ul>
-      <h3>Напоминания</h3><ul class="mem-list" id="reminders"></ul>
-      <h3>Журнал действий</h3><ul class="log-list" id="actions"></ul>
-      <h3>Перенос памяти</h3>
-      <div class="sched-row">
-        <a class="btn" id="memExport" href="/api/memory/export" download>Скачать копию (JSON)</a>
-        <label class="btn" for="memImportFile">Загрузить из файла…</label>
-        <input type="file" id="memImportFile" accept="application/json,.json" hidden>
-      </div>
-      <p class="muted small">Импорт только добавляет записи, повторы пропускаются. Плановые задачи из файла приходят выключенными; из настроек переносятся только голос и выбор модели.</p>
-    </div>
+    <div class="panel" id="tab-diag">
+      <div class="panel-head"><h3>Состояние</h3><button class="link-btn" id="diagRefresh">Обновить</button></div>
+      <ul class="diag-list" id="diag"></ul>
 
-    <div class="panel" id="tab-settings">
       <h3>Модель</h3>
       <div id="providers" class="providers"></div>
-      <p class="muted small">Простые команды («открой ютуб», «найди на ютубе…») выполняются без модели.</p>
-      <div class="panel-head"><h3>Навыки</h3><button class="link-btn" id="skillsReload">перечитать</button></div>
-      <ul class="tool-list" id="skills"></ul>
-      <p class="muted small">Сценарий — папка <code>skills/&lt;имя&gt;/SKILL.md</code>: описание, фразы запуска, инструменты и инструкция. Скажите «навык &lt;имя&gt; …» или фразу запуска.</p>
-      <h3>Инструменты</h3>
-      <ul class="tool-list" id="tools"></ul>
-    </div>
+      <p class="note">Простые команды («открой ютуб», «найди на ютубе…») выполняются без модели.</p>
 
-    <div class="panel" id="tab-diag">
-      <div class="panel-head"><h3>Состояние</h3><button class="link-btn" id="diagRefresh">обновить</button></div>
-      <ul class="diag-list" id="diag"></ul>
       <h3>Звук</h3>
       <div class="audio-box">
-        <label class="small muted" for="micSelect">Микрофон</label>
+        <label class="note" for="micSelect">Микрофон</label>
         <div class="inline-form">
           <select id="micSelect"></select>
           <button class="btn" id="micSave" type="button">Выбрать</button>
         </div>
         <div class="level" aria-label="Уровень сигнала микрофона"><div class="level-bar" id="levelBar"></div></div>
-        <div class="small muted" id="levelText">Уровень появится, когда работает локальный голос.</div>
-        <div class="inline-form">
+        <div class="note" id="levelText">Уровень появится, когда работает локальный голос.</div>
+        <div class="row">
           <button class="btn" id="micTest" type="button">Проверить микрофон</button>
           <button class="btn" id="ttsTest" type="button">Проверить голос</button>
         </div>
-        <div class="small" id="audioResult"></div>
+        <div class="note" id="audioResult"></div>
       </div>
-      <div class="panel-head"><h3>Версия и обновления</h3><button class="link-btn" id="updateOpen">подробнее</button></div>
+
+      <div class="panel-head"><h3>Версия и обновления</h3><button class="link-btn" id="updateOpen">Подробнее</button></div>
       <ul class="diag-list" id="updateDiag"></ul>
+
+      <div class="panel-head"><h3>Навыки</h3><button class="link-btn" id="skillsReload">Перечитать</button></div>
+      <ul class="tool-list" id="skills"></ul>
+      <p class="note">Сценарий — папка <code>skills/&lt;имя&gt;/SKILL.md</code>: описание, фразы запуска, инструменты и инструкция. Скажите «навык &lt;имя&gt; …» или фразу запуска.</p>
+      <h3>Инструменты</h3>
+      <ul class="tool-list" id="tools"></ul>
     </div>
   </aside>
 </main>
+
 <dialog class="dialog" id="updateDialog" aria-labelledby="updateTitle">
   <h3 id="updateTitle">Обновление Джарвиса</h3>
   <div id="updateBody"></div>
