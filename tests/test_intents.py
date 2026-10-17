@@ -3,7 +3,7 @@ import pytest
 from jarvis.intents import Intent, IntentMatcher
 
 APPS = {"блокнот": "notepad.exe", "диспетчер задач": "taskmgr.exe"}
-SITES = {"ютуб": "https://www.youtube.com"}
+SITES = {"ютуб": "https://www.youtube.com", "почта": "https://mail.google.com"}
 
 
 @pytest.fixture
@@ -17,6 +17,7 @@ def m():
     ("Открой YouTube.", Intent("open_website", {"name": "ютуб"})),
     ("открой ютюб", Intent("open_website", {"name": "ютуб"})),
     ("открой ютубе", Intent("open_website", {"name": "ютуб"})),
+    ("Открой почту.", Intent("open_website", {"name": "почта"})),
     ("открой ютуб музыку", Intent("open_anything", {"name": "ютуб музыку"})),
     ("запусти диспетчер задач", Intent("open_app", {"name": "диспетчер задач"})),
     ("пожалуйста, открой мне приложение блокнот", Intent("open_app", {"name": "блокнот"})),

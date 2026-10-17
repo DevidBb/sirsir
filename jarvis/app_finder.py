@@ -226,12 +226,12 @@ SITE_ALIASES = {
 
 def site_alias(name: str, table: dict[str, str]) -> str | None:
     """Ключ таблицы сайтов для произнесённого названия: «YouTube», «ютюбе», «википедию»."""
-    from .fuzzy import similarity
+    from .fuzzy import nominative, similarity
     from .security import normalize
     q = normalize(name)
-    alias = SITE_ALIASES.get(q)
+    wanted = {q, nominative(q), SITE_ALIASES.get(q), SITE_ALIASES.get(nominative(q))}
     for key in table:
-        if normalize(key) == alias:
+        if normalize(key) in wanted:
             return key
     # Падежи и мелкие ошибки распознавания: «ютубе», «википедию». Только для слов подлиннее —
     # у коротких имён («икс», «вк») один звук меняет смысл.

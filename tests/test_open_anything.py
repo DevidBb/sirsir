@@ -8,7 +8,7 @@ from conftest import FakeLLM
 from jarvis.app_finder import (StartMenuIndex, parse_lnk, parse_url_file, site_url,
                                unsafe_target_reason)
 from jarvis.assistant import Assistant
-from jarvis.fuzzy import similarity
+from jarvis.fuzzy import nominative, similarity
 from jarvis.intents import Intent, IntentMatcher
 from jarvis.memory import Memory
 from jarvis.tool_registry import Choice, ToolRegistry
@@ -170,6 +170,18 @@ def test_open_website_by_spoken_variant(ctl, spoken):
     # Whisper пишет «YouTube» латиницей; нечёткое сравнение с «ютуб» его не ловило.
     assert ctl.open_anything(spoken) == "Открываю ютуб."
     assert ctl.opened == ["https://www.youtube.com"]
+
+
+@pytest.mark.parametrize("spoken,nom", [
+    ("почту", "почта"), ("яндекс почту", "яндекс почта"), ("новую", "новая"), ("википедию", "википедия"),
+    ("блокнот", "блокнот"), ("вк", "вк"), ("загрузки", "загрузки"),
+])
+def test_nominative(spoken, nom):
+    assert nominative(spoken) == nom
+
+
+def test_open_site_in_accusative(ctl):
+    assert ctl.open_anything("википедию") == "Открываю википедия."
 
 
 def test_open_user_folders_and_files(ctl, config, tmp_path):

@@ -43,10 +43,26 @@ def translit(text: str) -> str:
     return "".join(TRANSLIT.get(ch, ch) for ch in text)
 
 
+_ACCUSATIVE = (("ую", "ая"), ("юю", "яя"), ("у", "а"), ("ю", "я"))
+
+
+def nominative(text: str) -> str:
+    """«открой почту» → «почта», «яндекс почту» → «яндекс почта»: последнее слово в им. падеже.
+
+    Только женский род на -у/-ю: так говорят чаще всего («камеру», «википедию»)."""
+    head, _, last = text.rpartition(" ")
+    if len(last) < 4:
+        return text
+    for acc, nom in _ACCUSATIVE:
+        if last.endswith(acc):
+            return f"{head} {last[:-len(acc)]}{nom}".strip()
+    return text
+
+
 def variants(text: str) -> set[str]:
-    """Нормализованный текст, его латинская запись и замена по словарю."""
+    """Нормализованный текст, его латинская запись, им. падеж и замена по словарю."""
     norm = normalize(text)
-    out = {norm, translit(norm)}
+    out = {norm, translit(norm), nominative(norm), translit(nominative(norm))}
     alias = norm
     for ru, en in sorted(ALIASES.items(), key=lambda kv: -len(kv[0])):
         alias = f" {alias} ".replace(f" {ru} ", f" {en} ").strip()

@@ -13,6 +13,7 @@ from typing import Any
 
 from .app_finder import FILE_EXTENSIONS, SEARCH_SITE_RE, site_alias
 from .calculator import phrase_to_expression
+from .fuzzy import nominative
 from .reminders import parse_duration
 from .security import normalize
 
@@ -170,9 +171,10 @@ MUSIC_RE = re.compile(r"^(?:включи|поставь|найди)(?: мне)? 
 
 def _lookup(name: str, table: dict[str, str]) -> str | None:
     q = normalize(name)
-    for key in table:
-        if normalize(key) == q:
-            return key
+    for wanted in dict.fromkeys((q, nominative(q))):  # «открой почту» → «почта»
+        for key in table:
+            if normalize(key) == wanted:
+                return key
     return None
 
 
