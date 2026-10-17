@@ -1,9 +1,11 @@
 """Сквозная проверка HUD так, как его запускает пользователь (run_web.bat).
 
-Запускает ``python -m jarvis --web --voice --no-open`` отдельным процессом, ждёт сервер и
-работает с ним как страница HUD: HTML и скрипты, /api/status, WebSocket-диалог (быстрая
-команда без модели), плановая задача, экспорт памяти, защита от чужого Origin. В конце
-останавливает процесс и проверяет журнал на необработанные ошибки.
+Запускает ``python -m jarvis.supervisor --web --voice --no-open`` (как run_web.bat) отдельным
+процессом, ждёт сервер и работает с ним как страница HUD: HTML и скрипты, /api/status,
+WebSocket-диалог (быстрая команда без модели), плановая задача, экспорт памяти, защита от
+чужого Origin. В конце — «Обновить и перезапустить»: Джарвис выходит с кодом 75, супервизор
+запускает проверку обновления без изменений (JARVIS_UPDATE_DRY_RUN) и снова поднимает HUD.
+Затем процессы останавливаются, журнал проверяется на необработанные ошибки.
 
 Микрофона и Ollama на машине CI нет — голос и модель должны честно сообщить об ошибке,
 а HUD продолжать работать. Код выхода 0 — всё в порядке.
@@ -104,9 +106,10 @@ def main() -> int:
     cfg_path = work / "config.toml"
     cfg_path.write_text(config, encoding="utf-8")
 
-    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
-    cmd = [sys.executable, "-m", "jarvis", "--config", str(cfg_path), "--web", "--voice", "--no-open",
-           "--skip-check"]
+    # Обновление по кнопке — только проверка (dry run): смоук-тест не меняет файлы проекта.
+    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8", "JARVIS_UPDATE_DRY_RUN": "1"}
+    cmd = [sys.executable, "-m", "jarvis.supervisor", "--config", str(cfg_path), "--web", "--voice",
+           "--no-open", "--skip-check"]
     print("Запуск:", " ".join(cmd), flush=True)
     log_out = open(work / "server.log", "w", encoding="utf-8")
     proc = subprocess.Popen(cmd, cwd=ROOT, env=env, stdout=log_out, stderr=subprocess.STDOUT)
@@ -116,6 +119,7 @@ def main() -> int:
 
         status, page = http(port, "/")
         check(status == 200 and b"<html" in page.lower(), "страница HUD отдаётся")
+        check(b"/static/hud.js?v=" in page, "скрипты с версией (после обновления не из кэша)")
         for asset in ("/static/hud.js", "/static/hud.css", "/static/markdown.js"):
             status, _ = http(port, asset)
             check(status == 200, f"файл {asset}")
@@ -169,18 +173,72 @@ def main() -> int:
         reply, _ = ws_dialog(port, "объясни подробно, чем отличается TCP от UDP, и приведи примеры", 150)
         text = (reply or {}).get("text", "")
         check(reply is not None and bool(text), "сложный запрос: ответ модели или честная ошибка", text[:100])
+
+        restart_after_update(port, proc)
     finally:
         code = finish(proc, work, log_out, args.keep_data)
     return code
 
 
-def finish(proc: subprocess.Popen, work: Path, log_out, keep: bool) -> int:
+def wait_port_closed(port: int, timeout: float) -> bool:
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                time.sleep(0.5)
+        except OSError:
+            return True
+    return False
+
+
+def restart_after_update(port: int, proc: subprocess.Popen) -> None:
+    """Кнопка «Обновить и перезапустить»: выход с кодом 75 → супервизор → снова HUD."""
+    info = json.loads(http(port, "/api/update")[1])
+    check(info.get("supervised") is True, "HUD знает, что запущен под супервизором")
+    status, raw = http(port, "/api/update/apply", "POST", {}, headers={"Origin": "http://evil.example"})
+    check(status == 403, "чужой сайт не может запустить обновление")
+    status, raw = http(port, "/api/update/apply", "POST", {})
+    if not check(status == 200, "обновление и перезапуск запускаются", raw.decode("utf-8", "replace")[:200]):
+        return
+    check(wait_port_closed(port, 90), "Джарвис завершился для обновления")
+    if not check(wait_port(port, proc, 180), "супервизор запустил Джарвиса снова"):
+        return
+    info = json.loads(http(port, "/api/update")[1])
+    result = info.get("result") or {}
+    check(result.get("dry_run") is True and "Проверка без изменений" in result.get("message", ""),
+          "HUD показывает итог обновления после перезапуска", result.get("message", "нет итога"))
+    reply, _ = ws_dialog(port, "сколько будет 6 умножить на 7")
+    check(reply is not None and "42" in reply.get("text", ""), "после перезапуска команды работают",
+          (reply or {}).get("text", "нет ответа")[:80])
+
+
+def stop_tree(proc: subprocess.Popen) -> None:
+    """Остановить супервизор и запущенного им Джарвиса."""
+    try:
+        import psutil
+        children = psutil.Process(proc.pid).children(recursive=True)
+    except Exception:  # noqa: BLE001 — процесс уже завершился или нет psutil
+        children = []
+    for child in children:
+        try:
+            child.terminate()
+        except Exception:  # noqa: BLE001
+            pass
     if proc.poll() is None:
         proc.terminate()
         try:
             proc.wait(20)
         except subprocess.TimeoutExpired:
             proc.kill()
+    for child in children:
+        try:
+            child.wait(20)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def finish(proc: subprocess.Popen, work: Path, log_out, keep: bool) -> int:
+    stop_tree(proc)
     log_out.close()
     server_log = (work / "server.log").read_text(encoding="utf-8", errors="replace")
     jarvis_log = work / "data" / "jarvis.log"

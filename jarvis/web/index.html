@@ -13,6 +13,7 @@
     <span class="dot"></span><span id="stateText">Готов</span><span class="state-detail" id="stateDetail"></span>
   </div>
   <div class="top-actions">
+    <button type="button" class="badge update" id="updateBadge" hidden title="Доступно обновление Джарвиса">Обновление</button>
     <span class="badge" id="providerBadge" title="Где работает модель">—</span>
     <span class="badge" id="connBadge">нет связи</span>
   </div>
@@ -157,9 +158,20 @@
         </div>
         <div class="small" id="audioResult"></div>
       </div>
+      <div class="panel-head"><h3>Версия и обновления</h3><button class="link-btn" id="updateOpen">подробнее</button></div>
+      <ul class="diag-list" id="updateDiag"></ul>
     </div>
   </aside>
 </main>
+<dialog class="dialog" id="updateDialog" aria-labelledby="updateTitle">
+  <h3 id="updateTitle">Обновление Джарвиса</h3>
+  <div id="updateBody"></div>
+  <div class="dialog-actions">
+    <button class="btn primary" id="updateApply" type="button">Обновить и перезапустить</button>
+    <button class="btn" id="updateCheck" type="button">Проверить ещё раз</button>
+    <button class="btn" id="updateClose" type="button">Закрыть</button>
+  </div>
+</dialog>
 <script src="/static/markdown.js"></script>
 <script src="/static/hud.js"></script>
 </body>

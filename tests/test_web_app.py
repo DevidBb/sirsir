@@ -214,3 +214,93 @@ def test_memory_export_import_api(server):
 def test_hybrid_is_the_shipped_default():
     from jarvis.config import Config
     assert Config.load(ROOT / "config.toml").get("llm.provider") == "hybrid"
+
+
+# --- обновления: состояние, проверка, «Обновить и перезапустить» ---
+
+class FakeChecker:
+    def __init__(self, status):
+        self.status = status
+        self.checks = 0
+
+    def check_now(self):
+        self.checks += 1
+        return self.status
+
+
+def update_status(**over):
+    st = {"checked_at": 1.0, "available": True, "behind": 2, "ahead": 0, "commits": [
+        {"sha": "abc1234", "time": 1, "subject": "Новая функция"}], "blocked": [],
+        "config_edited": False, "needs_packages": False, "can_apply": True, "current": None, "error": None}
+    st.update(over)
+    return st
+
+
+def test_index_versions_static_files(server):
+    client, _, _ = server
+    page = client.get("/")
+    assert page.headers["cache-control"] == "no-cache"
+    assert '/static/hud.js?v=' in page.text and '/static/hud.css?v=' in page.text
+    assert client.get("/static/hud.js?v=123").status_code == 200
+
+
+def test_hello_carries_ui_version_and_update(server):
+    client, _, runtime = server
+    runtime.update_checker = FakeChecker(update_status())
+    runtime.version = {"sha": "0000000", "time": 1, "subject": "старое"}
+    with client.websocket_connect(WS, headers=ORIGIN) as ws:
+        hello = ws.receive_json()
+    assert len(hello["ui"]) == 12
+    assert hello["update"]["status"]["behind"] == 2
+    assert hello["update"]["version"]["sha"] == "0000000"
+    assert hello["update"]["supervised"] is False
+
+
+def test_update_check_api(server):
+    client, _, runtime = server
+    assert client.post("/api/update/check").status_code == 400  # проверка выключена
+    runtime.update_checker = FakeChecker(update_status(available=False, behind=0))
+    r = client.post("/api/update/check").json()
+    assert r["ok"] and r["status"]["available"] is False and runtime.update_checker.checks == 1
+    assert client.post("/api/update/check", headers={"origin": "http://evil.example"}).status_code == 403
+    assert client.get("/api/update").json()["status"]["behind"] == 0
+    assert client.get("/api/status").json()["update"]["enabled"] is True
+
+
+def test_update_apply_needs_supervisor(server):
+    client, _, runtime = server
+    r = client.post("/api/update/apply")
+    assert r.status_code == 400 and "run_web.bat" in r.json()["error"]
+    assert runtime.exit_code == 0
+
+
+@pytest.mark.parametrize("state,status,code", [
+    ("thinking", update_status(), 409),                             # идёт задача
+    ("idle", update_status(blocked=["jarvis/main.py"]), 409),        # чужие правки
+    ("idle", update_status(ahead=1, can_apply=False), 409),          # история разошлась
+])
+def test_update_apply_refusals(server, state, status, code):
+    client, _, runtime = server
+    runtime.supervised = True
+    runtime.state = state
+    runtime.update_checker = FakeChecker(status)
+    r = client.post("/api/update/apply")
+    assert r.status_code == code and r.json()["ok"] is False
+    assert runtime.exit_code == 0
+
+
+def test_update_apply_restarts_with_code_75(server):
+    import threading
+    from jarvis.supervisor import RESTART_EXIT_CODE
+    client, _, runtime = server
+    runtime.supervised = True
+    runtime.update_checker = FakeChecker(update_status())
+    stopped = threading.Event()
+    runtime.on_exit = stopped.set
+    assert client.post("/api/update/apply", headers={"origin": "http://evil.example"}).status_code == 403
+    with client.websocket_connect(WS, headers=ORIGIN) as ws:
+        ws.receive_json()
+        assert client.post("/api/update/apply").json() == {"ok": True}
+        ev, _ = receive_until(ws, "restarting")
+    assert stopped.wait(5), "сервер не получил команду завершиться"
+    assert runtime.exit_code == RESTART_EXIT_CODE

@@ -219,3 +219,133 @@ def test_report_shows_code_version_and_local_sections(repos):
     assert report._local_config(cfg) == "разделы: files"  # без значений
     assert report._code_version(clone).split()[0] == git(clone, "rev-parse", "--short", "HEAD")
     assert report._local_config(Config.load(clone / "config.toml")) == "нет"
+
+
+# --- проверка для HUD: только смотрит, ничего не меняет ---
+
+def test_check_up_to_date(repos):
+    _, clone = repos
+    st = Updater(root=clone, interactive=False).check()
+    assert st["error"] is None and st["available"] is False and st["can_apply"] is False
+    assert st["current"]["subject"] == "v1" and len(st["current"]["sha"]) >= 7
+
+
+def test_check_finds_updates_without_changing_anything(repos):
+    upstream, clone = repos
+    push(upstream, {"README.md": "v2\n"}, "Первое")
+    push(upstream, {"requirements.txt": "numpy\nmcp\n"}, "Второе")
+    head = git(clone, "rev-parse", "HEAD")
+    st = Updater(root=clone, interactive=False).check()
+    assert st["available"] and st["behind"] == 2 and st["can_apply"]
+    assert [c["subject"] for c in st["commits"]] == ["Второе", "Первое"]
+    assert st["needs_packages"] is True
+    assert git(clone, "rev-parse", "HEAD") == head  # ветка не сдвинулась
+    assert (clone / "README.md").read_text(encoding="utf-8") == "v1\n"
+
+
+def test_check_reports_blocking_edits_and_config(repos):
+    upstream, clone = repos
+    push(upstream, {"README.md": "v2\n"})
+    write(clone / "README.md", "моё\n")
+    write(clone / "config.toml", BASE_CONFIG.replace("qwen3:8b", "my"))
+    st = Updater(root=clone, interactive=False).check()
+    assert st["blocked"] == ["README.md"] and st["config_edited"] is True
+    assert st["available"] and not st["can_apply"]
+    assert st["needs_packages"] is False
+
+
+def test_check_diverged(repos):
+    upstream, clone = repos
+    push(upstream, {"README.md": "v2\n"})
+    write(clone / "notes.txt", "local\n")
+    git(clone, "add", ".")
+    git(clone, "commit", "-m", "своё")
+    st = Updater(root=clone, interactive=False).check()
+    assert st["behind"] == 1 and st["ahead"] == 1 and not st["can_apply"]
+
+
+def test_check_fetch_error_and_not_git(repos, tmp_path):
+    _, clone = repos
+    git(clone, "remote", "set-url", "origin", str(tmp_path / "нет-такого.git"))
+    st = Updater(root=clone, interactive=False).check()
+    assert st["error"] and "fetch" in st["error"] and not st["available"]
+    assert "git clone" in Updater(root=tmp_path / "empty", interactive=False).check()["error"]
+
+
+def test_background_git_never_prompts(monkeypatch, tmp_path):
+    import jarvis.updater as up
+    seen = {}
+
+    def fake(cmd, cwd, env=None, timeout=None):
+        seen.update(env=env, timeout=timeout)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    monkeypatch.setattr(up, "_run_capture", fake)
+    Updater(root=tmp_path, interactive=False).fetch()
+    assert seen["env"]["GIT_TERMINAL_PROMPT"] == "0" and seen["env"]["GCM_INTERACTIVE"] == "never"
+    assert seen["timeout"] == up.FETCH_TIMEOUT
+    Updater(root=tmp_path).fetch()  # update.bat в консоли может спросить вход
+    assert seen["env"] is None
+
+
+def test_git_timeout_is_a_clear_error(monkeypatch, tmp_path):
+    import jarvis.updater as up
+
+    def slow(cmd, cwd, env=None, timeout=None):
+        raise subprocess.TimeoutExpired(cmd, timeout)
+    monkeypatch.setattr(up, "_run_capture", slow)
+    with pytest.raises(up.UpdateError, match="нет ответа"):
+        Updater(root=tmp_path, interactive=False).fetch()
+
+
+# --- обновление по кнопке HUD: итог для показа после перезапуска ---
+
+def test_run_from_hud_writes_result_for_hud(repos):
+    from jarvis.updater import run_from_hud, take_result
+    upstream, clone = repos
+    push(upstream, {"README.md": "v2\n"}, "Новая функция")
+    upd, _, _ = make_updater(clone)
+    assert run_from_hud(upd) == 0
+    assert (clone / "README.md").read_text(encoding="utf-8") == "v2\n"
+    result = take_result(clone)
+    assert result["ok"] and result["from"]["subject"] == "v1" and result["to"]["subject"] == "Новая функция"
+    assert [c["subject"] for c in result["commits"]] == ["Новая функция"]
+    assert take_result(clone) is None  # показывается один раз
+
+
+def test_run_from_hud_dry_run_changes_nothing(repos):
+    from jarvis.updater import run_from_hud, take_result
+    upstream, clone = repos
+    push(upstream, {"README.md": "v2\n"})
+    upd, _, _ = make_updater(clone)
+    assert run_from_hud(upd, dry_run=True) == 0
+    assert (clone / "README.md").read_text(encoding="utf-8") == "v1\n"
+    result = take_result(clone)
+    assert result["dry_run"] and "новых коммитов 1" in result["message"] and result["commits"] == []
+
+
+def test_failed_update_result_and_stale_results(repos):
+    import json
+    import time
+    from jarvis.updater import result_path, run_from_hud, take_result, write_result
+    upstream, clone = repos
+    push(upstream, {"README.md": "v2\n"})
+    write(clone / "README.md", "моё\n")
+    upd, _, _ = make_updater(clone)
+    assert run_from_hud(upd) == 1
+    result = take_result(clone)
+    assert result["ok"] is False and "README.md" in result["message"]
+    write_result({"at": time.time() - 7200, "ok": True, "message": "давно"}, clone)
+    assert take_result(clone) is None and not result_path(clone).exists()
+    result_path(clone).write_text(json.dumps({"at": "мусор"}), encoding="utf-8")
+    assert take_result(clone) is None
+
+
+def test_update_checker_publishes_status(repos):
+    from jarvis.updater import UpdateChecker
+    upstream, clone = repos
+    push(upstream, {"README.md": "v2\n"})
+    events = []
+    checker = UpdateChecker(Updater(root=clone, interactive=False), events.append, first_delay=0)
+    st = checker.check_now()
+    assert st["behind"] == 1 and checker.status is st
+    assert events[-1]["type"] == "update" and events[-1]["behind"] == 1

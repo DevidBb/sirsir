@@ -13,9 +13,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import os
 import queue
+import re
 import threading
 import time
 from collections import deque
@@ -24,6 +27,7 @@ from typing import Any
 
 from .assistant import EXIT, Reply
 from .config import Config
+from .supervisor import RESTART_EXIT_CODE, SUPERVISOR_ENV
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +76,13 @@ class Runtime:
         app.assistant.on_event = self._on_assistant_event
         app.observer = self._on_voice_event
         self.voice_task: int | None = None
+        # Обновления: проверка в фоне, кнопка «Обновить и перезапустить» (только под jarvis.supervisor).
+        self.update_checker: Any = None
+        self.update_result: dict | None = None   # итог обновления до этого запуска
+        self.version: dict | None = None         # текущий коммит
+        self.supervised = False
+        self.exit_code = 0
+        self.on_exit: Any = None                 # остановить сервер (задаёт run())
         self._thread = threading.Thread(target=self._worker, name="assistant", daemon=True)
         self._thread.start()
 
@@ -162,6 +173,17 @@ class Runtime:
 
     def stop(self) -> None:
         self.inbox.put(None)
+
+    def request_exit(self, code: int) -> None:
+        """Завершить Джарвиса с кодом выхода (RESTART_EXIT_CODE — перезапуск с обновлением)."""
+        self.exit_code = code
+        if self.on_exit is not None:
+            self.on_exit()
+
+    def update_info(self) -> dict[str, Any]:
+        checker = self.update_checker
+        return {"status": checker.status if checker else None, "enabled": checker is not None,
+                "result": self.update_result, "version": self.version, "supervised": self.supervised}
 
     def _worker(self) -> None:
         while True:
@@ -258,6 +280,7 @@ class Runtime:
                       if getattr(app, "files", None) else {"roots": [], "missing": []}),
             "checks": [{"name": r.name, "ok": r.ok, "detail": r.detail, "required": r.required}
                        for r in checks.run_all(app.config, voice=False)],
+            "update": self.update_info(),
         }
 
 
@@ -276,13 +299,14 @@ def _same_origin(headers, port: int) -> bool:
 def create_app(runtime: Runtime, port: int):
     from starlette.applications import Starlette
     from starlette.requests import Request
-    from starlette.responses import FileResponse, JSONResponse, Response
+    from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
     from starlette.routing import Mount, Route, WebSocketRoute
     from starlette.staticfiles import StaticFiles
     from starlette.websockets import WebSocket, WebSocketDisconnect
 
     app_core = runtime.app
     hub = runtime.hub
+    ui_version = static_version()
 
     def guard(request: Request) -> Response | None:
         if not _same_origin(request.headers, port):
@@ -292,7 +316,10 @@ def create_app(runtime: Runtime, port: int):
     async def index(request: Request):
         if (resp := guard(request)) is not None:
             return resp
-        return FileResponse(STATIC_DIR / "index.html")
+        # Версия в ссылках на скрипты и стили: после обновления браузер не возьмёт старые из кэша.
+        page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        page = re.sub(r'(/static/[\w.-]+\.(?:js|css))"', rf'\1?v={ui_version}"', page)
+        return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
 
     async def favicon(request: Request):
         return Response(FAVICON, media_type="image/svg+xml")
@@ -508,6 +535,45 @@ def create_app(runtime: Runtime, port: int):
             return JSONResponse({"error": "not found"}, status_code=404)
         return FileResponse(path)
 
+    # --- обновления ---
+    async def update_api(request: Request):
+        if (resp := guard(request)) is not None:
+            return resp
+        return JSONResponse(runtime.update_info())
+
+    async def update_check(request: Request):
+        if (resp := guard(request)) is not None:
+            return resp
+        if runtime.update_checker is None:
+            return JSONResponse({"ok": False, "error": "проверка обновлений выключена ([update] check)"},
+                                status_code=400)
+        await asyncio.to_thread(runtime.update_checker.check_now)
+        return JSONResponse({"ok": True, **runtime.update_info()})
+
+    async def update_apply(request: Request):
+        """Обновить и перезапустить: Джарвис выходит, jarvis.supervisor обновляет и запускает снова."""
+        if (resp := guard(request)) is not None:
+            return resp
+        if not runtime.supervised:
+            return JSONResponse({"ok": False, "error": "Перезапуск из HUD работает, когда Джарвис запущен "
+                                 "через run_web.bat. Закройте Джарвиса и запустите update.bat."}, status_code=400)
+        if runtime.state in (THINKING, ACTING):
+            return JSONResponse({"ok": False, "error": "Джарвис выполняет задачу — дождитесь конца "
+                                 "или нажмите «Стоп»."}, status_code=409)
+        st = runtime.update_checker.status if runtime.update_checker else None
+        if st and st.get("blocked"):
+            return JSONResponse({"ok": False, "error": "Изменены файлы проекта: " + ", ".join(st["blocked"])
+                                 + ". Закоммитьте или верните их, иначе обновление остановится."},
+                                status_code=409)
+        if st and st.get("ahead") and st.get("behind"):
+            return JSONResponse({"ok": False, "error": "История разошлась (есть свои неотправленные коммиты) "
+                                 "— объедините вручную: git pull --rebase."}, status_code=409)
+        log.info("Обновление из HUD: перезапуск")
+        hub.publish({"type": "restarting", "reason": "update"})
+        # Ответ и событие должны успеть уйти до остановки сервера.
+        asyncio.get_running_loop().call_later(0.5, runtime.request_exit, RESTART_EXIT_CODE)
+        return JSONResponse({"ok": True})
+
     async def ws_endpoint(ws: WebSocket):
         if not _same_origin(ws.headers, port):
             await ws.close(code=1008)
@@ -519,7 +585,8 @@ def create_app(runtime: Runtime, port: int):
             history = list(hub.history)
         await ws.send_json({"type": "hello", "state": runtime.state, "history": history,
                             "provider": app_core.config.get("llm.provider", "ollama"),
-                            "voice": app_core.voice_status()})
+                            "voice": app_core.voice_status(), "ui": ui_version,
+                            "update": runtime.update_info()})
 
         async def sender():
             while True:
@@ -579,10 +646,23 @@ def create_app(runtime: Runtime, port: int):
         Route("/api/audio/device", audio_device, methods=["POST"]),
         Route("/api/audio/test", audio_test, methods=["POST"]),
         Route("/api/audio/speak", audio_speak, methods=["POST"]),
+        Route("/api/update", update_api),
+        Route("/api/update/check", update_check, methods=["POST"]),
+        Route("/api/update/apply", update_apply, methods=["POST"]),
         WebSocketRoute("/ws", ws_endpoint),
         Mount("/static", StaticFiles(directory=STATIC_DIR), name="static"),
     ]
     return Starlette(routes=routes, lifespan=lifespan)
+
+
+def static_version() -> str:
+    """Короткий хеш файлов HUD: меняется, когда обновление принесло новый интерфейс."""
+    digest = hashlib.sha256()
+    for path in sorted(STATIC_DIR.glob("*")):
+        if path.is_file():
+            digest.update(path.name.encode())
+            digest.update(path.read_bytes())
+    return digest.hexdigest()[:12]
 
 
 def _tail_actions(config: Config, limit: int = 60) -> list[str]:
@@ -629,6 +709,7 @@ def run(config: Config, app_factory, open_browser: bool | None = None, voice: bo
     core = app_factory()
     hub = Hub()
     runtime = Runtime(core, hub)
+    start_updates(runtime, config)
     core.start_schedules(runtime.run_scheduled)  # плановые задачи идут через очередь HUD
     if voice:
         start_voice(core, hub)  # напоминания запустит голосовой цикл (или start_voice при ошибке)
@@ -641,10 +722,31 @@ def run(config: Config, app_factory, open_browser: bool | None = None, voice: bo
     if open_browser if open_browser is not None else config.get("web.open_browser", True):
         import webbrowser
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+    server = uvicorn.Server(uvicorn.Config(web, host=host, port=port, log_level="warning",
+                                           timeout_graceful_shutdown=5))
+    runtime.on_exit = lambda: setattr(server, "should_exit", True)
     try:
-        uvicorn.run(web, host=host, port=port, log_level="warning")
+        server.run()
     finally:
+        if runtime.update_checker is not None:
+            runtime.update_checker.stop()
         runtime.stop()
         core.quit()
         core.close()
-    return 0
+    return runtime.exit_code
+
+
+def start_updates(runtime: Runtime, config: Config) -> None:
+    """Версия, итог прошлого обновления и фоновая проверка новых (только git fetch)."""
+    from . import updater
+    runtime.supervised = os.environ.get(SUPERVISOR_ENV) == "1"
+    runtime.update_result = updater.take_result()
+    if runtime.update_result:
+        log.info("Итог обновления: %s", runtime.update_result.get("message"))
+    git = updater.Updater(interactive=False)
+    runtime.version = git.version()
+    if not config.get("update.check", True):
+        return
+    runtime.update_checker = updater.UpdateChecker(
+        git, runtime.hub.publish, interval_hours=float(config.get("update.check_interval_hours", 6)))
+    runtime.update_checker.start()

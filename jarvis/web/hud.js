@@ -14,7 +14,7 @@
     open_website: "Открываю сайт", look_at_screen: "Смотрю на экран", screen_screenshot: "Снимок экрана", open_app: "Запускаю программу", web_search: "Поиск на сайте",
   };
 
-  let ws = null, reconnectDelay = 500, uiState = "idle";
+  let ws = null, reconnectDelay = 500, uiState = "idle", uiVersion = null;
   const bubbles = new Map();   // task -> {el, text}
   const toolRows = [];         // незавершённые шаги
   let speaking = false;
@@ -43,10 +43,19 @@
   function handle(ev) {
     switch (ev.type) {
       case "hello":
+        // Сервер перезапустился с новым интерфейсом (обновление) — загрузить новую версию страницы.
+        if (uiVersion && ev.ui && ev.ui !== uiVersion) { location.reload(); return; }
+        uiVersion = ev.ui || uiVersion;
         setState(ev.state || "idle");
         setProvider(ev.provider);
         applyVoice(ev.voice);
         (ev.history || []).slice(-60).forEach(h => { if (h.type !== "state") timelineEvent(h, true); });
+        applyUpdateInfo(ev.update);
+        break;
+      case "update": update.status = ev; renderUpdate(); break;
+      case "restarting":
+        addSystem("Обновляюсь и перезапускаюсь… Обычно это 10–60 секунд, страница переподключится сама.");
+        setState("acting"); $("stateText").textContent = "Перезапуск";
         break;
       case "state": setState(ev.state, ev.detail); break;
       case "voice": applyVoice(ev); break;
@@ -321,6 +330,129 @@
   function stopSpeech() { if (window.speechSynthesis) speechSynthesis.cancel(); if (speaking) { speaking = false; setState("idle"); } }
   $("shutUpBtn").onclick = () => { if (serverVoice.enabled) send({ type: "shut_up" }); stopSpeech(); };
 
+  // ---------- обновления ----------
+  // Сервер проверяет обновления сам (git fetch при запуске и раз в несколько часов) и шлёт
+  // событие update; «Обновить и перезапустить» работает, когда HUD запущен через run_web.bat.
+  const update = { status: null, supervised: false, version: null };
+  function store(key, value) {
+    try { if (value === undefined) return localStorage.getItem(key); localStorage.setItem(key, value); }
+    catch (e) { /* приватный режим */ }
+    return null;
+  }
+  function plural(n, forms) {
+    const m10 = n % 10, m100 = n % 100;
+    return `${n} ${forms[m10 === 1 && m100 !== 11 ? 0 : m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20) ? 1 : 2]}`;
+  }
+  const CHANGES = ["изменение", "изменения", "изменений"];
+  function ago(ts) {
+    const s = Math.max(0, Date.now() / 1000 - ts);
+    if (s < 90) return "только что";
+    if (s < 3600) return `${Math.round(s / 60)} мин назад`;
+    if (s < 86400 * 2) return `${Math.round(s / 3600)} ч назад`;
+    return new Date(ts * 1000).toLocaleDateString();
+  }
+  function applyUpdateInfo(info) {
+    if (!info) return;
+    update.supervised = !!info.supervised;
+    update.version = info.version || update.version;
+    if (info.status) update.status = info.status;
+    renderUpdate();
+    showUpdateResult(info.result);
+  }
+  function renderUpdate() {
+    const st = update.status, avail = !!(st && st.available);
+    $("updateBadge").hidden = !avail;
+    if (avail) {
+      $("updateBadge").textContent = `Обновление · ${st.behind}`;
+      const head = st.commits && st.commits.length ? st.commits[0].sha : String(st.behind);
+      if (store("jarvis.update.notified") !== head) {
+        store("jarvis.update.notified", head);
+        addSystem(`Доступно обновление Джарвиса: ${plural(st.behind, CHANGES)}. Нажмите «Обновление» вверху.`);
+      }
+    }
+    if ($("updateDialog").open) renderUpdateDialog();
+    renderUpdateDiag();
+  }
+  function versionText(v) { return v ? `${v.sha} от ${new Date(v.time * 1000).toLocaleString()} — ${v.subject}` : "неизвестна (не git-установка)"; }
+  function renderUpdateDialog() {
+    const st = update.status, body = $("updateBody");
+    body.innerHTML = "";
+    const p = (text, cls) => { const el = document.createElement("p"); if (cls) el.className = cls; el.textContent = text; body.appendChild(el); };
+    p("Сейчас: " + versionText(update.version), "muted small");
+    if (!st) p("Проверка ещё не выполнялась — нажмите «Проверить ещё раз».");
+    else if (st.error) p("Не удалось проверить: " + st.error, "bad");
+    else if (!st.available) p(`Установлена последняя версия (проверено ${ago(st.checked_at)}).` + (st.ahead ? ` Своих неотправленных коммитов: ${st.ahead}.` : ""));
+    else {
+      p(`Новых изменений: ${st.behind} (проверено ${ago(st.checked_at)})`);
+      const ul = document.createElement("ul"); ul.className = "commit-list";
+      st.commits.forEach(c => {
+        const li = document.createElement("li");
+        const code = document.createElement("code"); code.textContent = c.sha;
+        const subj = document.createElement("span"); subj.textContent = c.subject;
+        const when = document.createElement("span"); when.className = "muted"; when.textContent = ago(c.time);
+        li.append(code, subj, when); ul.appendChild(li);
+      });
+      if (st.behind > st.commits.length) { const li = document.createElement("li"); li.className = "muted"; li.textContent = `… и ещё ${st.behind - st.commits.length}`; ul.appendChild(li); }
+      body.appendChild(ul);
+      if (st.needs_packages) p("Изменились зависимости — обновление доустановит пакеты, это займёт несколько минут.", "muted small");
+      if (st.config_edited) p("Ваши правки config.toml будут перенесены в config.local.toml (он не перезаписывается обновлениями).", "muted small");
+      if (st.blocked.length) p("Изменены файлы проекта: " + st.blocked.join(", ") + ". Закоммитьте или верните их — иначе обновление остановится.", "bad small");
+      if (st.ahead) p(`Есть свои неотправленные коммиты (${st.ahead}) — история разошлась, объединить нужно вручную: git pull --rebase.`, "bad small");
+    }
+    if (!update.supervised) p("Кнопка перезапуска работает, когда Джарвис запущен через run_web.bat. Сейчас: закройте Джарвиса и запустите update.bat.", "muted small");
+    $("updateApply").hidden = !(st && st.available);
+    $("updateApply").disabled = !(update.supervised && st && st.can_apply);
+  }
+  function renderUpdateDiag() {
+    const ul = $("updateDiag"); ul.innerHTML = "";
+    const row = (cls, mk, text) => {
+      const li = document.createElement("li"); li.className = cls;
+      const m = document.createElement("span"); m.className = "mk"; m.textContent = mk;
+      const t = document.createElement("span"); t.textContent = text;
+      li.append(m, t); ul.appendChild(li);
+    };
+    row("ok", "✓", "Версия: " + versionText(update.version));
+    const st = update.status;
+    if (!st) row("warn", "!", "Обновления: ещё не проверялись");
+    else if (st.error) row("warn", "!", "Обновления: не удалось проверить — " + st.error);
+    else if (st.available) row("warn", "↑", `Обновления: доступно ${plural(st.behind, CHANGES)} (проверено ${ago(st.checked_at)})`);
+    else row("ok", "✓", `Обновления: последняя версия (проверено ${ago(st.checked_at)})`);
+    row(update.supervised ? "ok" : "warn", update.supervised ? "✓" : "!", update.supervised
+      ? "Перезапуск после обновления: из HUD (запущено через run_web.bat)"
+      : "Перезапуск после обновления: только вручную — update.bat (Джарвис запущен не через run_web.bat)");
+  }
+  function showUpdateResult(r) {
+    if (!r || !r.at || Number(store("jarvis.update.shown") || 0) >= r.at) return;
+    store("jarvis.update.shown", String(r.at));
+    if (!r.ok) { addSystem("Обновление не выполнено: " + r.message, true); return; }
+    const commits = r.commits || [];
+    addSystem(commits.length
+      ? `Джарвис обновлён (${r.from.sha} → ${r.to.sha}), ${plural(commits.length, CHANGES)}:\n` + commits.slice(0, 10).map(c => "• " + c.subject).join("\n")
+      : r.message);
+  }
+  function openUpdate() { renderUpdateDialog(); $("updateDialog").showModal(); }
+  $("updateBadge").onclick = openUpdate;
+  $("updateOpen").onclick = openUpdate;
+  $("updateClose").onclick = () => $("updateDialog").close();
+  $("updateCheck").onclick = async () => {
+    $("updateCheck").disabled = true;
+    $("updateCheck").textContent = "Проверяю…";
+    try { applyUpdateInfo(await api("/api/update/check", { method: "POST" })); }
+    catch (e) { addSystem("Проверка обновлений: " + e.message, true); }
+    $("updateCheck").disabled = false;
+    $("updateCheck").textContent = "Проверить ещё раз";
+    renderUpdateDialog();
+  };
+  $("updateApply").onclick = async () => {
+    if (!confirm("Джарвис закроется, обновится и запустится снова — обычно это 10–60 секунд. Продолжить?")) return;
+    try {
+      const r = await fetch("/api/update/apply", { method: "POST", headers: { "Content-Type": "application/json" } });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || String(r.status));
+      $("updateDialog").close();
+    } catch (e) { alert("Обновление не запущено: " + e.message); }
+  };
+
   // ---------- вкладки ----------
   document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
     document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
@@ -532,6 +664,7 @@
     row(v.enabled, !v.error, v.enabled ? `Локальный голос: включён, микрофон ${v.mic || "по умолчанию"}${v.muted ? " (выключен)" : ""}`
       : `Локальный голос: ${v.error ? "ошибка — " + v.error : "не запущен (run_web.bat или --web --voice)"}`);
     row(true, false, `Микрофон браузера: ${Rec ? "распознавание браузера (облако Google)" : "недоступно в этом браузере"}; озвучивание: ${window.speechSynthesis ? "голоса системы" : "нет"}`);
+    applyUpdateInfo(s.update);
   }
   $("diagRefresh").onclick = () => { refreshStatus(); loadAudio(); };
 
