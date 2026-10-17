@@ -341,7 +341,7 @@ code { font: 13px var(--code); }
 .provider input { margin-top: 4px; }
 .provider b { font: 600 15px var(--display); }
 .pnote { color: var(--ash); font-size: 13px; }
-.diag-list li { display: grid; grid-template-columns: 18px 1fr; gap: 8px; padding: 5px 0; font-size: 13.5px; }
+.diag-list li { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 8px; padding: 5px 0; font-size: 13.5px; overflow-wrap: anywhere; }
 .diag-list .mk { font: 700 13px var(--display); }
 .diag-list .ok .mk { color: var(--ok); }
 .diag-list .bad .mk { color: var(--danger); }
@@ -392,6 +392,8 @@ code { font: 13px var(--code); }
   .clock { font-size: 21px; }
   .bar-right { gap: 10px; }
   .chips button { padding: 8px 12px; }
+  .tabs { padding: 0 4px; }
+  .tab { padding: 12px 7px 10px; font-size: 14.5px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .eye::before, .eye-rings .arc, .eye-rings .ticks-major, .entry.streaming .body::after, .timeline li.run::before { animation: none !important; }

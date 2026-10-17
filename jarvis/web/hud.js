@@ -599,7 +599,7 @@
 
   // ---------- вкладки ----------
   document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
-    document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
+    document.querySelectorAll(".tab").forEach(x => { x.classList.toggle("active", x === t); x.setAttribute("aria-selected", String(x === t)); });
     document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === "tab-" + t.dataset.tab));
     if (t.dataset.tab === "memory") loadMemory();
     if (t.dataset.tab === "schedule") loadSchedules();

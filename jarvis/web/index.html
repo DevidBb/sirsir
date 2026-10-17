@@ -101,11 +101,11 @@
 
   <aside class="side-col" aria-label="Подробности">
     <nav class="tabs" role="tablist">
-      <button class="tab active" data-tab="timeline">Шаги</button>
-      <button class="tab" data-tab="results">Результаты</button>
-      <button class="tab" data-tab="memory">Память</button>
-      <button class="tab" data-tab="schedule">Расписание</button>
-      <button class="tab" data-tab="diag">Система</button>
+      <button class="tab active" role="tab" aria-selected="true" aria-controls="tab-timeline" data-tab="timeline">Шаги</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="tab-results" data-tab="results">Результаты</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="tab-memory" data-tab="memory">Память</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="tab-schedule" data-tab="schedule">Расписание</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="tab-diag" data-tab="diag">Система</button>
     </nav>
 
     <div class="panel active" id="tab-timeline">
