@@ -205,7 +205,8 @@ def _():
 @check("браузер Джарвиса (Playwright Chromium): открыть страницу и прочитать элементы")
 def _():
     from jarvis.browser import BrowserController
-    with tempfile.TemporaryDirectory() as d:
+    # Дочерние процессы Chromium отпускают LOCK в профиле чуть позже close() — не ошибка проверки.
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         b = BrowserController(Path(d) / "profile", headless=True, channel="chromium", timeout_ms=15000)
         try:
             title = b.call(lambda: (b._ensure(), b.page.set_content(
