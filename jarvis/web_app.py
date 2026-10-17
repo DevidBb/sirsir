@@ -220,7 +220,7 @@ class Runtime:
             return not assistant.emergency.active
 
         with self.app.handle_lock:  # голосовая команда в это время ждёт
-            reply = assistant.handle(text, on_sentence=on_sentence)
+            reply = assistant.handle(text, on_sentence=on_sentence, channel="hud")
         self.current = None
         self._publish_reply(task, reply)
         if reply is not None and reply.action == EXIT:

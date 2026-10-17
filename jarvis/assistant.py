@@ -85,6 +85,16 @@ def compose_system_prompt(request: str) -> str:
     return COMPOSE_PROMPT
 COMPOSE_MAX_TOKENS = 500
 PREVIEW_WORDS = 15
+# Реплика из чата HUD: активное окно — сам HUD, печатать и нажимать клавиши там бессмысленно.
+HUD_TYPING_NOTE = ("Ввод текста и клавиши работают в активном окне, а сейчас это HUD. "
+                   "Скажите это голосом, когда нужное окно будет активным.")
+QUESTION_WORDS = (r"(?:где|как|почему|зачем|что|какой|какая|какое|какие|сколько|откуда|куда|когда|"
+                  r"есть ли|нет ли)\b")
+# «Открой проект и найди, где задаётся порт» — вопрос о содержимом, а не два действия подряд.
+FIND_QUESTION_RE = re.compile(rf"^(?:найди|поищи|посмотри|проверь|выясни|узнай)[\s,]+{QUESTION_WORDS}", re.I)
+# «Зайди на github и посмотри, какие есть задачи» — вопрос о странице, а не строка поиска.
+# («Найди на ютубе как поменять масло» — обычный поиск видео, поэтому здесь без «найди».)
+LOOK_QUESTION_RE = re.compile(rf"\b(?:посмотри|проверь|выясни|узнай)[\s,]+{QUESTION_WORDS}", re.I)
 # Быстрые команды ввода, которые выполняет сам помощник (не инструменты LLM).
 INPUT_INTENTS = ("press_keys", "send_message", "type_in_window", "compose_text")
 # Составные команды: «открой блокнот и напиши привет», «запусти телеграм, потом вставь».
@@ -190,7 +200,8 @@ def hybrid_route(query: str, last: str | None = None) -> tuple[str, str]:
 
 def is_multistep_request(query: str) -> bool:
     """Явный поиск можно выполнить сразу; анализ нескольких источников — через модель."""
-    return bool(MULTISTEP_RE.search(query) or CHAIN_RE.search(query)) or len(query.split()) > 14
+    return (bool(MULTISTEP_RE.search(query) or CHAIN_RE.search(query) or LOOK_QUESTION_RE.search(query))
+            or len(query.split()) > 14)
 
 
 LEAD_WORDS_RE = re.compile(r"^\s*(?:(?:привет|здравствуй|слушай|эй|окей|ок|джарвис)[\s,!.]+)+",
@@ -255,6 +266,7 @@ class Assistant:
         self.active_skill: Any = None
         # Плановая задача без пользователя: подтверждения невозможны — такие действия не выполняются.
         self.unattended = False
+        self.channel = "voice"  # откуда текущая реплика: "voice" (голос, консоль) или "hud" (чат HUD)
         # Снимки экрана («посмотри на экран»); screen_grabber подменяется в тестах.
         self.screen_dir = config.root / "data" / "screenshots"
         self.screen_grabber: Callable[[], Any] | None = None
@@ -271,8 +283,11 @@ class Assistant:
         self.confirmations.cancel()
         self.dictation.active = False
 
-    def handle(self, text: str, on_sentence: Callable[[str], bool] | None = None) -> Reply | None:
-        """on_sentence — озвучивать ответ LLM по мере генерации (вернуть False — прервать)."""
+    def handle(self, text: str, on_sentence: Callable[[str], bool] | None = None,
+               channel: str = "voice") -> Reply | None:
+        """on_sentence — озвучивать ответ LLM по мере генерации (вернуть False — прервать).
+        channel="hud" — реплика из чата HUD: текст не печатается в активное окно (это сам HUD)."""
+        self.channel = channel
         reply = self._handle(text, on_sentence)
         if reply is not None and reply.text and not self._matches(text or "", "repeat"):
             self.last_reply = reply.text
@@ -337,10 +352,16 @@ class Assistant:
                            "description": self.active_skill.description})
                 return self._ask_model(text, on_sentence)
 
+        if self._open_and_ask(text):  # «открой проект и найди, где …» — целиком модели
+            return self._ask_model(text, on_sentence)
         quick = self._quick_intent(text)
         if quick is not None:
             return quick
         return self._ask_model(text, on_sentence)
+
+    def _open_and_ask(self, text: str) -> bool:
+        m = COMPOSITE_RE.match(LEAD_WORDS_RE.sub("", text))
+        return bool(m and FIND_QUESTION_RE.match(m.group("b").strip()))
 
     def _ask_model(self, text: str, on_sentence: Callable[[str], bool] | None = None) -> Reply:
         provider = str(self.config.get("llm.provider", "ollama")).lower()
@@ -454,7 +475,7 @@ class Assistant:
         if whole is not None and whole.tool != "open_anything":
             return None  # «открой ютуб и найди котиков» — один поиск, не две команды
         m = COMPOSITE_RE.match(LEAD_WORDS_RE.sub("", text))
-        if not m:
+        if not m or FIND_QUESTION_RE.match(m.group("b").strip()):
             return None
         first_intent = self.intents.match(m.group("a"))
         if first_intent is None or first_intent.tool not in OPEN_TOOLS:
@@ -475,7 +496,7 @@ class Assistant:
             if (first_intent.tool == "open_website"
                     and first_intent.args.get("name") in ("chatgpt", "чатгпт")):
                 target_window = "ChatGPT"
-            drafted = self._input_intent(second, second_intent, target_window=target_window)
+            drafted = self._input_intent(second, second_intent, target_window=target_window, new_window=True)
             return Reply(" ".join(x for x in (first.text, drafted.text) if x),
                          expect_followup=drafted.expect_followup, data=drafted.data, ok=drafted.ok)
         typed = TYPE_AFTER_RE.match(second)
@@ -491,7 +512,11 @@ class Assistant:
 
     # --- ввод текста и клавиш (LLM к этому доступа не имеет) ---
     def _input_intent(self, text: str, intent: Intent,
-                      target_window: str | None = None) -> Reply:
+                      target_window: str | None = None, new_window: bool = False) -> Reply:
+        """new_window — составная команда уже открыла нужное окно и дождалась его."""
+        hud_front = self.channel == "hud" and not new_window
+        if hud_front and intent.tool in ("press_keys", "send_message"):
+            return Reply(HUD_TYPING_NOTE)
         if not self.guard.allow_action():
             return Reply("Слишком много действий за минуту, действие заблокировано.")
         args = intent.args
@@ -511,7 +536,8 @@ class Assistant:
             error = self.dictation.type_into(args["window"], args["text"])
             audit.info("type_in_window %s -> %s", args["window"], error or "ok")
             return Reply(error or "", expect_followup=False)
-        return self._compose(args["request"], target_window=target_window)
+        return self._compose(args["request"], target_window=target_window,
+                             show_only=hud_front and target_window is None)
 
     # --- «посмотри на экран» (только по прямой просьбе пользователя) ---
     def _look_at_screen(self, question: str) -> Reply:
@@ -555,8 +581,9 @@ class Assistant:
         self.conversation.end_turn()
         return Reply(answer, data=data)
 
-    def _compose(self, request: str, target_window: str | None = None) -> Reply:
-        """Сочинить текст; промпты делегируются Claude без инструментов, ввод — после подтверждения."""
+    def _compose(self, request: str, target_window: str | None = None, show_only: bool = False) -> Reply:
+        """Сочинить текст; промпты делегируются Claude без инструментов, ввод — после подтверждения.
+        show_only — из чата HUD: показать весь текст с кнопкой «Скопировать», ничего не печатать."""
         system_prompt = compose_system_prompt(request)
         draft: str | None = None
         provider = str(self.config.get("llm.provider", "ollama")).lower()
@@ -607,6 +634,13 @@ class Assistant:
             draft = (message.get("content") or "").strip().strip("«»\"' ")
         if not draft or looks_like_tool_text(draft):
             return Reply("Не получилось составить текст. Скажите иначе, пожалуйста.")
+        if show_only:
+            self.last_draft = draft
+            self.conversation.begin_turn(request)
+            self.conversation.add({"role": "assistant", "content": f"Составил текст: {draft}"})
+            self.conversation.end_turn()
+            return Reply("Готово, текст ниже. Скопируйте его кнопкой и вставьте (Ctrl+V) в нужном окне — "
+                         "или скажите «вставь».\n\n" + draft, data={"kind": "draft", "text": draft})
         words = draft.split()
         preview = " ".join(words[:PREVIEW_WORDS]) + ("…" if len(words) > PREVIEW_WORDS else "")
 
@@ -696,12 +730,17 @@ class Assistant:
         lowered = text.strip().lower()
         for prefix in TYPE_PREFIXES:
             if lowered.startswith(prefix):
+                if self.channel == "hud":
+                    return Reply(HUD_TYPING_NOTE)
                 # Печатаем ровно то, что сказал пользователь, без участия LLM.
                 error = self.dictation.type_text(text.strip()[len(prefix):])
                 return Reply(error or "", expect_followup=False)
         if self._matches(text, "help"):
             return Reply(HELP_TEXT)
         if self._matches(text, "start_dictation") and not self._matches(text, "stop_dictation"):
+            if self.channel == "hud":
+                return Reply("Диктовка работает голосом: скажите «Джарвис, начни диктовку», когда "
+                             "активно окно, куда печатать.")
             self.dictation.active = True
             return Reply("Диктуйте. Чтобы закончить, скажите «закончи диктовку».")
         if self._matches(text, "cancel"):

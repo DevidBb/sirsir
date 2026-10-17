@@ -160,6 +160,7 @@ code { font: 13px var(--code); }
 .result .acts .link-btn:hover { color: var(--signal); }
 .shot { display: block; max-width: 100%; margin-top: 8px; border-radius: 8px; border: 1px solid var(--seam-2); }
 .opened { margin-top: 6px; font-size: 14px; }
+.draft-acts { margin-top: 10px; }
 .diff-box { margin-top: 8px; border: 1px solid var(--seam-2); border-radius: 8px; background: var(--night); }
 .diff-box summary { cursor: pointer; padding: 7px 10px; font: 14px var(--display); color: var(--ash); }
 .diff { margin: 0; padding: 8px 10px; max-height: 420px; overflow: auto; font: 12px/1.45 var(--code); white-space: pre; }

@@ -244,6 +244,22 @@
       img.alt = data.kind === "screen" ? "Снимок экрана" : "Снимок страницы";
       img.src = "/api/screenshots/" + encodeURIComponent(data.file);
       wrap.appendChild(img);
+    } else if (data.kind === "draft" && data.text) {
+      // Текст из чата HUD не печатается в окно (активно само окно HUD) — копируется кнопкой.
+      wrap.className = "draft-acts";
+      const copy = document.createElement("button");
+      copy.type = "button"; copy.className = "btn"; copy.textContent = "Скопировать текст";
+      copy.onclick = async () => {
+        try { await navigator.clipboard.writeText(data.text); }
+        catch (e) {
+          const area = document.createElement("textarea");
+          area.value = data.text; document.body.appendChild(area); area.select();
+          document.execCommand("copy"); area.remove();
+        }
+        copy.textContent = "Скопировано";
+        setTimeout(() => { copy.textContent = "Скопировать текст"; }, 2000);
+      };
+      wrap.appendChild(copy);
     } else if (data.kind === "page" || data.kind === "opened") {
       wrap.className = "opened";
       wrap.appendChild(link(data.url, data.title || data.url));

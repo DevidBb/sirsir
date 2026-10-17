@@ -148,7 +148,7 @@ def test_composite_chatgpt_prompt_is_pinned_to_chatgpt_window(config):
     a.dictation.foreground_title = lambda: "Untitled - Notepad"
     a.dictation.wait_new_foreground = lambda before, timeout=8.0, step=0.25: "ChatGPT — Google Chrome"
     a._quick_intent = lambda phrase: Reply("Открываю сайт ChatGPT.")
-    a._input_intent = lambda phrase, intent, target_window=None: (
+    a._input_intent = lambda phrase, intent, target_window=None, new_window=False: (
         targets.append(target_window), Reply("Текст подготовлен."))[1]
 
     reply = a._composite("Открой ChatGPT и напиши промпт для создания сайта.")

@@ -303,3 +303,28 @@ def test_hybrid_prompt_uses_claude_without_tools_and_targets_chatgpt(config):
     assert result.text == "Напечатал."
     assert a.typed == [draft + " "]
     assert a.windows.focused == ["ChatGPT — Google Chrome"]
+
+
+# --- чат HUD: активное окно — сам HUD, печатать туда нельзя ----------------
+def test_hud_compose_shows_full_text_with_copy_and_types_nothing(config):
+    a = make(config, [text(LETTER)], active=("Chrome_WidgetWin_1", "J.A.R.V.I.S. — Google Chrome"))
+    reply = a.handle("Напиши письмо начальнику, что я заболел", channel="hud")
+    assert reply.data == {"kind": "draft", "text": LETTER}
+    assert LETTER in reply.text and "Скопируйте" in reply.text
+    assert not a.confirmations.has_pending()
+    assert a.typed == [] and a.keys == []
+
+
+@pytest.mark.parametrize("phrase", ["выдели всё", "отправь", "напечатай привет", "начни диктовку"])
+def test_hud_keyboard_commands_explain_instead_of_typing_into_hud(config, phrase):
+    a = make(config, active=("Chrome_WidgetWin_1", "J.A.R.V.I.S. — Google Chrome"))
+    reply = a.handle(phrase, channel="hud")
+    assert "голосом" in reply.text
+    assert a.typed == [] and a.keys == [] and not a.dictation.active
+    assert not a.confirmations.has_pending()
+
+
+def test_voice_channel_keeps_typing_behaviour(config):
+    a = make(config)
+    a.handle("выдели всё")
+    assert a.keys == [HOTKEYS["select_all"][1]]

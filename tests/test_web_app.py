@@ -329,3 +329,14 @@ def test_gpu_parsing_and_cache():
     now[0] = 6
     mon.gpu()
     assert len(calls) == 2
+
+
+def test_compose_from_hud_chat_returns_text_to_copy(server):
+    client, app, _ = server
+    with client.websocket_connect(WS, headers=ORIGIN) as ws:
+        ws.receive_json()
+        ws.send_json({"type": "message", "text": "напиши сообщение другу, что я опаздываю"})
+        reply, _ = receive_until(ws, "reply")
+    assert reply["data"] == {"kind": "draft", "text": "Привет! Я Джарвис."}
+    assert reply["pending_confirmation"] is False
+    assert app.assistant.channel == "hud"

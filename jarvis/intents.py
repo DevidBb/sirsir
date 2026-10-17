@@ -127,6 +127,13 @@ SEARCH_ON_RE = re.compile(rf"^{SEARCH_VERB}(?: мне)? (?:на|в|во) (?:{SEA
 SEARCH_AFTER_OPEN_RE = re.compile(
     rf"^(?:открой|запусти|зайди на|зайди в|перейди на) (?:{SEARCH_SITE_RE})"
     rf" (?:и|и там|а там|и потом) {SEARCH_VERB}(?: мне)? (?P<q>.+)$")
+# «Найди файл отчёт», «где лежит документ договор» — поиск по имени в папках пользователя, без модели.
+# «Найди файл, где написано про отпуск» — поиск по содержимому: это уже модели.
+FILE_SEARCH_RE = re.compile(r"^(?:найди|поищи|где лежит|где лежат|где находится)(?: мне| у меня)? "
+                            r"(?:файл|файлы|документ|документы)(?: с именем| под названием| который называется"
+                            r"| называется)? (?P<q>.+)$")
+FILE_CONTENT_RE = re.compile(r"^(?:где|в котором|в которых|который|которые|с текстом|про|о том|со словами|"
+                             r"содержащ)")
 WEB_SEARCH_RE = re.compile(r"^(?:загугли|погугли|гугли)(?: мне)? (?P<g>.+)$"
                            r"|^(?:найди|поищи|ищи|посмотри) в (?:интернете|инете|сети) (?P<d>.+)$")
 # English: «search youtube for X», «find X on youtube», «open youtube and search X», «google X».
@@ -213,6 +220,9 @@ class IntentMatcher:
         reminder = self._match_reminder(norm)
         if reminder is not None:
             return reminder
+        m = FILE_SEARCH_RE.match(norm)
+        if m and not FILE_CONTENT_RE.match(m.group("q")):
+            return Intent("search_files", {"query": m.group("q")})
         m = REMEMBER_RE.match(text)
         if m and not norm.startswith(("запомни где", "запомни когда")):
             fact = m.group("f").strip().rstrip(".!")
