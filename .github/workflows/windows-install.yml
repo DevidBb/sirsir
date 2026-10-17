@@ -85,6 +85,7 @@ jobs:
           findstr /c:"ci_marker = 1" config.local.toml || exit /b 1
           .venv\Scripts\python.exe -c "from jarvis.config import Config; assert Config.load().get('files.ci_marker') == 1"
           del config.local.toml
+      - name: Диагностический отчёт
         if: always()
         shell: cmd
         run: .venv\Scripts\python.exe -m jarvis --report
