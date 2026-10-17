@@ -366,3 +366,42 @@ def test_hybrid_falls_back_to_local_model_when_claude_fails(config, caplog):
     assert reply.text == "Локальный ответ о погоде."
     assert len(a.fake.requests) == 1
     assert "локальную Ollama" in caplog.text
+
+
+def test_tool_exception_is_reported_as_failure(config):
+    from jarvis.tool_registry import Tool
+    a = build(config, [tool_call("boom"), text("Не получилось.")])
+    a.registry.register(Tool("boom", "Ломается", lambda: 1 / 0))
+    events = []
+    a.on_event = events.append
+    a.handle("слушай, сделай пожалуйста ту штуку, которая ломается, очень нужно прямо сейчас")
+    out = a._run_tool("boom", {})
+    assert out.ok is False and "Не удалось выполнить действие" in out
+    assert [e["ok"] for e in events if e["type"] == "tool_end"] == [False, False]
+
+
+def test_rejected_and_blocked_calls_are_failures(config):
+    a = build(config, [])
+    assert a._run_tool("no_such_tool", {}).ok is False
+    assert a._run_tool("open_app", {"name": "блокнот", "evil": 1}).ok is False
+    a.emergency.trigger()
+    assert a._run_tool("current_time", {}).ok is False
+
+
+def test_current_date_in_system_prompt(config):
+    import datetime
+    from jarvis.llm import now_text
+    a = build(config, [text("ок")])
+    a.handle("какое завтра число")
+    system = a.fake.requests[0]["messages"][0]["content"]
+    today = datetime.date.today()
+    assert f" {today.year}" in system and now_text().split(",")[0] in system
+    # Дата — в конце: начало промпта не меняется каждую минуту (кэш Ollama).
+    assert system.rstrip().endswith(now_text().split("Завтра — ")[1])
+
+
+def test_now_text_knows_tomorrow():
+    import datetime
+    from jarvis.llm import now_text
+    t = now_text(datetime.datetime(2026, 12, 31, 23, 5))
+    assert "четверг, 31 декабря 2026, 23:05" in t and "Завтра — 1 января 2027" in t

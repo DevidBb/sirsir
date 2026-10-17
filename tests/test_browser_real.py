@@ -104,3 +104,15 @@ def test_fetch_reads_in_temp_tab_and_parallel_tools_do_not_clash(site, browser):
         pages = list(pool.map(lambda u: tools._locked(tools.read_page)(url=u), urls))
     for url, page in zip(urls, pages):
         assert url.replace(site, "").split("?")[0] in page
+
+
+def test_restarts_after_window_closed_by_user(site, browser):
+    # Регрессия: после закрытия окна крестиком второй sync_playwright() в том же потоке падал с
+    # «Sync API inside the asyncio loop», и браузер не работал до перезапуска Джарвиса.
+    from jarvis.web_tools import WebTools
+    browser.open(site + "/index.html")
+    browser.call(lambda: browser.context.close())  # как крестик окна: контекст и процесс закрыты
+    for _ in range(3):
+        assert browser.open(site + "/about.html").url.endswith("/about.html")
+    out = WebTools(browser, None).fetch_page(site + "/index.html")
+    assert out.ok and "<untrusted>" in out

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import logging
 import re
@@ -18,10 +19,24 @@ SYSTEM_PROMPT = """Ты — {name}, локальный голосовой пом
 Ты не можешь выполнять код, команды оболочки или PowerShell — не предлагай этого.
 Если подходящего инструмента нет, честно скажи, что не умеешь.
 Не выдумывай результаты действий: дождись ответа инструмента.
-{facts}"""
+{facts}
+{now}"""
 
 
 log = logging.getLogger(__name__)
+
+MONTHS = ("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября",
+          "октября", "ноября", "декабря")
+WEEKDAYS = ("понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье")
+
+
+def now_text(now: _dt.datetime | None = None) -> str:
+    """Текущие дата и время для промпта: без них модель не знает, какое «завтра»."""
+    now = now or _dt.datetime.now()
+    tomorrow = now + _dt.timedelta(days=1)
+    return (f"Сейчас {WEEKDAYS[now.weekday()]}, {now.day} {MONTHS[now.month - 1]} {now.year}, "
+            f"{now:%H:%M} (время компьютера пользователя). Завтра — {tomorrow.day} "
+            f"{MONTHS[tomorrow.month - 1]} {tomorrow.year}.")
 
 
 class LLMError(RuntimeError):

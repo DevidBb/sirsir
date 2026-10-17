@@ -23,7 +23,7 @@ from .dictation import Dictation
 from .fuzzy import similarity
 from .intents import ACTION_CHAIN_RE, HOTKEY_PHRASES, Intent, IntentMatcher
 from .llm import (SYSTEM_PROMPT, Conversation, LLMError, OllamaClient, SentenceStream,
-                  looks_like_tool_text)
+                  looks_like_tool_text, now_text)
 from .memory import Memory
 from .security import (CommandGuard, ConfirmationManager, EmergencyStop,
                        contains_phrase, normalize)
@@ -770,7 +770,8 @@ class Assistant:
         return None
 
     def _system_prompt(self, query: str = "") -> str:
-        return SYSTEM_PROMPT.format(name=self.name, facts=self.memory.context_for(query)) + self.skill_prompt()
+        return SYSTEM_PROMPT.format(name=self.name, facts=self.memory.context_for(query),
+                                    now=now_text()) + self.skill_prompt()
 
     def remember_task(self, request: str, answer: str, tools: list[str]) -> None:
         """Итог многошаговой задачи — в память (видно и удаляется во вкладке «Память»)."""
@@ -838,7 +839,8 @@ class Assistant:
                     seen_calls.add(key)
 
                     outcome = (self._run_tool(name, args) if name in allowed or name not in self.registry.names()
-                               else f"Ошибка: инструмент {name} недоступен в навыке {self.active_skill.name}.")
+                               else ToolResult(f"Ошибка: инструмент {name} недоступен в навыке "
+                                               f"{self.active_skill.name}.", ok=False))
                     used_tools.append(name)
                     if isinstance(outcome, Reply):  # нужно подтверждение
                         self.conversation.add({"role": "tool", "tool_name": name,
@@ -859,11 +861,11 @@ class Assistant:
         except ToolError as e:
             log.warning("Отклонён вызов %s: %s", name, e)
             self.emit({"type": "tool_end", "name": name, "ok": False, "text": f"Ошибка: {e}"})
-            return f"Ошибка: {e}"
+            return ToolResult(f"Ошибка: {e}", ok=False)
         if self.emergency.active:
-            return "Остановлено пользователем, действие не выполнено."
+            return ToolResult("Остановлено пользователем, действие не выполнено.", ok=False)
         if not self.guard.allow_action(tool.read_only):
-            return "Ошибка: слишком много действий за минуту, действие заблокировано."
+            return ToolResult("Ошибка: слишком много действий за минуту, действие заблокировано.", ok=False)
         shown = self.registry.loggable(tool, clean)
         logged = json.dumps(shown, ensure_ascii=False)
 
@@ -874,7 +876,8 @@ class Assistant:
                 result = tool.handler(**clean)
             except Exception as e:  # действие не должно ронять помощника
                 log.exception("Ошибка инструмента %s", name)
-                result, ok = f"Не удалось выполнить действие: {e}", False
+                # ok=False доходит до модели (у Claude — is_error), иначе сбой выглядит как успех.
+                result, ok = ToolResult(f"Не удалось выполнить действие: {e}", ok=False), False
             if not isinstance(result, str):  # None или число от обработчика не должны ронять ответ
                 result = "Готово." if result is None else str(result)
             ok = ok and getattr(result, "ok", True)

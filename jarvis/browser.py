@@ -150,6 +150,14 @@ def is_risky_name(name: str) -> bool:
     return bool(RISKY_WORDS.search(name or ""))
 
 
+# Так Playwright сообщает о закрытом окне, вкладке или процессе браузера.
+CLOSED_MARKERS = ("has been closed", "Target closed", "Browser closed", "Connection closed")
+
+
+def is_closed_error(error: BaseException) -> bool:
+    return any(m in str(error) for m in CLOSED_MARKERS)
+
+
 class BrowserController:
     """Видимый Chromium с профилем ``data/browser-profile``.
 
@@ -216,7 +224,10 @@ class BrowserController:
                     self.page = pages[-1] if pages else self.context.new_page()
                 return
             except Exception:  # noqa: BLE001
-                self.context = None
+                # Старый Playwright обязательно остановить: пока он жив, его цикл asyncio считается
+                # запущенным в этом потоке, и второй sync_playwright() падает с
+                # «Sync API inside the asyncio loop» — браузер не поднимался до перезапуска Джарвиса.
+                self._shutdown()
         if self._launcher is not None:
             self.context = self._launcher(self)
         else:
@@ -270,6 +281,7 @@ class BrowserController:
         except Exception:  # noqa: BLE001
             pass
         self.context = self.page = self._pw = None
+        self.last_elements = {}
 
     def close(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -280,7 +292,17 @@ class BrowserController:
     def _run(self, fn: Callable[[], Any]) -> Any:
         def job():
             self._ensure()
-            return fn()
+            try:
+                return fn()
+            except Exception as e:  # noqa: BLE001
+                if not is_closed_error(e):
+                    raise
+                # Окно закрыли вручную, а Playwright узнаёт об этом только при следующем вызове:
+                # запускаем браузер заново и повторяем действие один раз.
+                log.info("Окно браузера закрыто (%s) — запускаю заново", str(e).splitlines()[0])
+                self._shutdown()
+                self._ensure()
+                return fn()
         try:
             result = self.call(job)
             self.last_error = ""

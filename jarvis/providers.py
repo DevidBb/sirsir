@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
-from .llm import SentenceStream
+from .llm import SentenceStream, now_text
 
 if TYPE_CHECKING:
     from .assistant import Assistant, Reply
@@ -383,7 +383,10 @@ class ClaudeAgentBackend:
                     return
         watcher = asyncio.create_task(watch_stop())
         try:
-            prompt = self._memory_note(assistant, text) + self._context(assistant) + text
+            # Дата — в запросе, а не в системном промпте: тот входит в ключ клиента (_key),
+            # и клиент пересоздавался бы каждую минуту.
+            prompt = (now_text() + "\n" + self._memory_note(assistant, text)
+                      + self._context(assistant) + text)
             if image is None:
                 await client.query(prompt)
             else:

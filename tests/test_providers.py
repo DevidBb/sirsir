@@ -286,3 +286,24 @@ def test_hybrid_backend_uses_claude_when_sdk_is_available(config, monkeypatch):
     monkeypatch.setattr(ClaudeAgentBackend, "available", staticmethod(lambda: (True, "ready")))
     config.set("llm.provider", "hybrid")
     assert isinstance(make_agent_backend(config), ClaudeAgentBackend)
+
+
+def test_tool_exception_reaches_claude_as_error(env):
+    assistant, backend, _, _ = env
+    assistant.registry.register(Tool("boom", "Ломается", lambda: 1 / 0))
+    server, _ = backend._build_tools(assistant)
+    backend._state = {}
+    out = asyncio.run(server["tools"]["boom"].handler({}))
+    assert out["is_error"] is True and "Не удалось выполнить действие" in out["content"][0]["text"]
+    ok = asyncio.run(server["tools"]["lookup"].handler({"q": "x"}))
+    assert ok["is_error"] is False
+
+
+def test_current_date_goes_to_prompt_not_system_prompt(env):
+    from jarvis.llm import now_text
+    assistant, _, _, _ = env
+    FakeClient.script = [result("ок")]
+    assistant.handle("какая погода будет завтра в Таллине")
+    day = now_text().split(",")[0]
+    assert FakeClient.prompts[0].startswith(day)
+    assert day not in FakeClient.seen_options[0].system_prompt
