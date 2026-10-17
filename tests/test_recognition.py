@@ -5,7 +5,7 @@ import types
 import pytest
 
 from jarvis import wake_word
-from jarvis.speech_recognition import is_hallucination
+from jarvis.speech_recognition import SpeechRecognizer, config_hotwords, is_hallucination
 from jarvis.wake_word import VoskWakeWord, strip_wake_phrase
 
 
@@ -106,3 +106,26 @@ def test_nvidia_dll_dirs_noop_elsewhere(monkeypatch):
     from jarvis import speech_recognition as sr
     monkeypatch.setattr(sr.sys, "platform", "linux")
     assert sr.add_nvidia_dll_dirs() == []
+
+
+class _Cfg:
+    def __init__(self, data):
+        self.data = data
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
+
+    def path(self, key):
+        return None
+
+
+def test_hotwords_auto_takes_russian_site_names():
+    cfg = _Cfg({"windows.websites": {"ютуб": "u", "chatgpt": "c", "гитхаб": "g"}})
+    assert config_hotwords(cfg) == "Джарвис, ютуб, гитхаб"
+    assert SpeechRecognizer.from_config(cfg).hotwords == "Джарвис, ютуб, гитхаб"
+
+
+def test_hotwords_explicit_or_disabled():
+    assert config_hotwords(_Cfg({"speech_recognition.hotwords": "Джарвис, Пятница"})) == "Джарвис, Пятница"
+    assert config_hotwords(_Cfg({"speech_recognition.hotwords": ""})) == ""
+    assert SpeechRecognizer.from_config(_Cfg({}), hotwords="Джарвис").hotwords == "Джарвис"

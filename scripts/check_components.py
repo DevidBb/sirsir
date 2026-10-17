@@ -54,9 +54,7 @@ def live_asr(config: Config) -> bool:
     import sounddevice as sd
     from jarvis.speech_recognition import SpeechRecognizer
     try:
-        asr = SpeechRecognizer(config.get("speech_recognition.model", "small"),
-                               config.get("speech_recognition.device", "cuda"),
-                               models_dir=config.path("speech_recognition.models_dir"))
+        asr = SpeechRecognizer.from_config(config)
         device = asr.load()
         sr = int(config.get("audio.sample_rate", 16000))
         print("Говорите 4 секунды…")

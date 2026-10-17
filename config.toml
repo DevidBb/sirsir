@@ -50,6 +50,9 @@ compute_type_gpu = "float16"
 compute_type_cpu = "int8"
 models_dir = "models/whisper"
 beam_size = 1
+# Подсказка Whisper, какие слова ждать. "auto" — «Джарвис» и русские названия сайтов из
+# [windows.websites] (синтезированные «открой …» пятью голосами: 29/35 → 34/35). "" — без подсказки.
+hotwords = "auto"
 
 [llm]
 # Только localhost. Иные адреса блокируются модулем security.

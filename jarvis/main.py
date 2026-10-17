@@ -289,13 +289,7 @@ class App:
         # Детектор «стоп» на той же модели — слушает, пока помощник говорит.
         stop_detector = (wake.with_phrases(cfg.get("assistant.interrupt_phrases", ["стоп"]))
                          if cfg.get("assistant.barge_in", True) else None)
-        asr = SpeechRecognizer(cfg.get("speech_recognition.model", "small"),
-                               cfg.get("speech_recognition.device", "cuda"),
-                               cfg.get("speech_recognition.compute_type_gpu", "float16"),
-                               cfg.get("speech_recognition.compute_type_cpu", "int8"),
-                               cfg.path("speech_recognition.models_dir"),
-                               cfg.get("assistant.language", "ru"),
-                               int(cfg.get("speech_recognition.beam_size", 1)))
+        asr = SpeechRecognizer.from_config(cfg)
         print(f"Распознавание речи: {asr.load()}")
         self.speaker.load()
         print(f"Голос: {self.speaker.describe()}")

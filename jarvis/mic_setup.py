@@ -148,9 +148,7 @@ def _try_recognition(config: Config, speech: np.ndarray) -> None:
         print(f"\n(проверка «Джарвис» пропущена: {e})")
     try:
         from .speech_recognition import SpeechRecognizer
-        asr = SpeechRecognizer(config.get("speech_recognition.model", "small"),
-                               config.get("speech_recognition.device", "cuda"),
-                               models_dir=config.path("speech_recognition.models_dir"))
+        asr = SpeechRecognizer.from_config(config)
         asr.load()
         text = asr.transcribe(speech.astype(np.float32) / 32768.0)
         print(f"Распознано: «{text}»" if text else "Распознано: (ничего)")

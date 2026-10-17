@@ -67,7 +67,30 @@ def add_nvidia_dll_dirs() -> list[str]:
     return added
 
 
+def config_hotwords(config) -> str:
+    """Подсказка Whisper: «auto» — «Джарвис» и русские названия сайтов из [windows.websites].
+
+    Без неё «открой гитхаб» слышится как «гитхап», а «ютуб» — как «YouTube». Программы и
+    папки не добавляем: их Whisper и так пишет верно, а длинная подсказка замедляет распознавание."""
+    value = config.get("speech_recognition.hotwords", "auto")
+    if value != "auto":
+        return str(value or "")
+    sites = [name for name in config.get("windows.websites", {}) if re.search(r"[а-яё]", name)]
+    return ", ".join(["Джарвис", *sites])
+
+
 class SpeechRecognizer:
+    @classmethod
+    def from_config(cls, config, hotwords: str | None = None) -> "SpeechRecognizer":
+        return cls(config.get("speech_recognition.model", "small"),
+                   config.get("speech_recognition.device", "cuda"),
+                   config.get("speech_recognition.compute_type_gpu", "float16"),
+                   config.get("speech_recognition.compute_type_cpu", "int8"),
+                   config.path("speech_recognition.models_dir"),
+                   config.get("assistant.language", "ru"),
+                   int(config.get("speech_recognition.beam_size", 1)),
+                   config_hotwords(config) if hotwords is None else hotwords)
+
     def __init__(self, model: str = "small", device: str = "cuda",
                  compute_type_gpu: str = "float16", compute_type_cpu: str = "int8",
                  models_dir: str | Path | None = None, language: str = "ru", beam_size: int = 1,

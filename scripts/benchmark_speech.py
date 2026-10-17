@@ -24,6 +24,7 @@ console_utf8()
 import numpy as np  # noqa: E402
 
 from jarvis.config import Config  # noqa: E402
+from jarvis.intents import IntentMatcher  # noqa: E402
 from jarvis.speech_recognition import SpeechRecognizer  # noqa: E402
 from jarvis.text_to_speech import SileroBackend  # noqa: E402
 from jarvis.wake_word import VoskWakeWord, strip_wake_phrase  # noqa: E402
@@ -43,6 +44,10 @@ STOPS = ["Стоп.", "Хватит.", "Замолчи."]
 COMMANDS = ["Джарвис, открой блокнот.", "Поставь таймер на пять минут.", "Который час?",
             "Напомни через двадцать минут выключить плиту.", "Сделай погромче.",
             "Что такое чёрная дыра?", "Подтверждаю."]
+# «Открой …» — что должно открыться. На них видно, помогает ли подсказка Whisper (hotwords).
+OPEN_COMMANDS = [("Открой ютуб.", "ютуб"), ("Джарвис, открой ютуб.", "ютуб"), ("Открой гитхаб.", "гитхаб"),
+                 ("Открой википедию.", "википедия"), ("Открой почту.", "почта"),
+                 ("Открой блокнот.", "блокнот"), ("Открой диспетчер задач.", "диспетчер задач")]
 
 rng = np.random.default_rng(0)
 
@@ -86,9 +91,7 @@ def main() -> int:
     print(f"  «стоп» пользователя: {stops}/{len(SPEAKERS[1:]) * len(STOPS)}")
 
     print("== Распознавание ==")
-    asr = SpeechRecognizer(cfg.get("speech_recognition.model", "small"),
-                           cfg.get("speech_recognition.device", "cuda"),
-                           models_dir=cfg.path("speech_recognition.models_dir"))
+    asr = SpeechRecognizer.from_config(cfg)
     print(f"  устройство: {asr.load()}")
     asr.transcribe(say16("Проверка.", "baya"))  # прогрев
     times = []
@@ -100,6 +103,27 @@ def main() -> int:
     print(f"  среднее время: {sum(times) / len(times):.2f} с")
     noise = rng.normal(0, 0.02, 48000).astype(np.float32)
     print(f"  на шуме: {asr.transcribe(noise)!r} (должно быть пусто)")
+
+    print("== Команды «открой …»: подсказка Whisper ==")
+    matcher = IntentMatcher(cfg.get("windows.apps", {}), cfg.get("windows.websites", {}),
+                            cfg.get("windows.folders", {}))
+    audio = [(want, say16(phrase, s)) for phrase, want in OPEN_COMMANDS for s in SPEAKERS]
+    for label, hot in (("без подсказки", "Джарвис"), (f"hotwords «{asr.hotwords}»", None)):
+        r = SpeechRecognizer.from_config(cfg, hotwords=hot)
+        r._model, r.device = asr._model, asr.device  # та же модель, другая подсказка
+        ok, times, wrong = 0, [], []
+        for want, a in audio:
+            t = time.monotonic()
+            text = r.transcribe(a)
+            times.append(time.monotonic() - t)
+            intent = matcher.match(text)
+            if intent and intent.args.get("name") == want:
+                ok += 1
+            else:
+                wrong.append(text)
+        print(f"  {label}: {ok}/{len(audio)}, {sum(times) / len(times):.2f} с на фразу")
+        if wrong:
+            print(f"    не поняты: {wrong}")
     return 0
 
 

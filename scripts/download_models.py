@@ -59,10 +59,14 @@ def download_silero(target: Path) -> None:
     tmp = target.with_suffix(".part")
     url = SILERO_BASE + target.name  # имя файла = версия модели: v5_6_ru.pt, v4_ru.pt
 
+    shown = [-1]
+
     def progress(blocks: int, block_size: int, total: int) -> None:
-        if total > 0:
-            print(f"\r  {min(100, blocks * block_size * 100 // total)}% из {total // 2**20} МБ",
-                  end="", flush=True)
+        # Печатаем только смену процента: в логе install.bat «\r» не стирает строку.
+        percent = min(100, blocks * block_size * 100 // total) if total > 0 else -1
+        if percent != shown[0] and percent >= 0:
+            shown[0] = percent
+            print(f"\r  {percent}% из {total // 2**20} МБ", end="", flush=True)
     print(f"Скачиваю голос Silero: {url}")
     urllib.request.urlretrieve(url, tmp, progress)
     print()

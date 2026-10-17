@@ -65,8 +65,7 @@ def wake():
 @pytest.fixture(scope="module")
 def asr():
     from jarvis.speech_recognition import SpeechRecognizer
-    r = SpeechRecognizer(CFG.get("speech_recognition.model"), CFG.get("speech_recognition.device"),
-                         models_dir=CFG.path("speech_recognition.models_dir"))
+    r = SpeechRecognizer.from_config(CFG)
     r.load()
     return r
 

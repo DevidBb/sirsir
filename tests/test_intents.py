@@ -18,6 +18,8 @@ def m():
     ("открой ютюб", Intent("open_website", {"name": "ютуб"})),
     ("открой ютубе", Intent("open_website", {"name": "ютуб"})),
     ("Открой почту.", Intent("open_website", {"name": "почта"})),
+    ("Джарвис открою YouTube", Intent("open_website", {"name": "ютуб"})),
+    ("Подкрой ютуб", Intent("open_website", {"name": "ютуб"})),
     ("открой ютуб музыку", Intent("open_anything", {"name": "ютуб музыку"})),
     ("запусти диспетчер задач", Intent("open_app", {"name": "диспетчер задач"})),
     ("пожалуйста, открой мне приложение блокнот", Intent("open_app", {"name": "блокнот"})),
