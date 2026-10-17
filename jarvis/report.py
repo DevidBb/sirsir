@@ -16,6 +16,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tomllib
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -63,6 +64,29 @@ def _audio_devices() -> str:
         return f"недоступно: {e}"
 
 
+def _code_version(root: Path) -> str:
+    """Коммит, из которого запущен Джарвис (чтобы понять, обновлялся ли он)."""
+    if shutil.which("git") is None or not (root / ".git").exists():
+        return "неизвестно (не git-установка)"
+    try:
+        out = subprocess.run(["git", "log", "-1", "--format=%h %cd", "--date=format:%Y-%m-%d %H:%M"],
+                             cwd=root, capture_output=True, text=True, timeout=10)
+        return out.stdout.strip() or "неизвестно"
+    except Exception as e:
+        return f"ошибка: {e}"
+
+
+def _local_config(config: Config) -> str:
+    if config.local_path is None:
+        return "нет"
+    try:
+        with open(config.local_path, "rb") as f:
+            sections = sorted(tomllib.load(f))
+    except Exception as e:
+        return f"ошибка: {e}"
+    return "разделы: " + (", ".join(sections) or "пусто")  # только имена — значения бывают личными
+
+
 def _log_tail(path: Path, lines: int = 150) -> str:
     if not path.is_file():
         return "(лога нет)"
@@ -79,6 +103,7 @@ def build(config: Config) -> str:
         f"Система: {platform.platform()}; Python {sys.version.split()[0]} ({platform.architecture()[0]})",
         f"Процессор: {platform.processor() or platform.machine()}",
         f"Видеокарта: {_gpu()}",
+        f"Версия кода: {_code_version(config.root)}",
         "",
         "== Пакеты ==",
         *[f"  {p}: {_version(p)}" for p in PACKAGES],
@@ -88,6 +113,7 @@ def build(config: Config) -> str:
         "",
         "== Настройки ==",
         *[f"  {k} = {config.get(k)!r}" for k in CONFIG_KEYS],
+        f"  config.local.toml: {_local_config(config)}",
         "",
         "== Проверки ==",
         buf.getvalue().rstrip(),

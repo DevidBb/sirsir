@@ -668,7 +668,11 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return 0
 
-    config = Config.load(args.config)
+    try:
+        config = Config.load(args.config)
+    except (OSError, ValueError) as e:
+        print(f"Не удалось прочитать настройки: {e}")
+        return 1
     load_dotenv(config.root / ".env")
     # Настройки, сохранённые голосом и мастером микрофона (memory.db), — до проверок,
     # иначе проверка показывает микрофон по умолчанию, а не выбранный.

@@ -6,6 +6,7 @@ on:
   pull_request:
     paths:
       - "install.bat"
+      - "update.bat"
       - "requirements*.txt"
       - "scripts/download_models.py"
       - "scripts/check_components.py"
@@ -18,6 +19,7 @@ on:
     branches: [main]
     paths:
       - "install.bat"
+      - "update.bat"
       - "requirements*.txt"
       - "scripts/download_models.py"
       - "scripts/check_components.py"
@@ -70,7 +72,19 @@ jobs:
       - name: HUD как у пользователя (run_web.bat) — сервер, страница, WebSocket, поиск, расписание
         shell: cmd
         run: .venv\Scripts\python.exe scripts\hud_smoke.py
-      - name: Диагностический отчёт
+      - name: update.bat как у пользователя (ветка main с upstream, правка config.toml уходит в config.local.toml)
+        if: github.ref == 'refs/heads/main'
+        shell: cmd
+        run: |
+          git fetch --quiet origin main || exit /b 1
+          git checkout -q -B main --track origin/main || exit /b 1
+          git reset -q --hard %GITHUB_SHA% || exit /b 1
+          .venv\Scripts\python.exe -c "import pathlib; p=pathlib.Path('config.toml'); p.write_text(p.read_text(encoding='utf-8').replace('[files]', '[files]\nci_marker = 1', 1), encoding='utf-8')"
+          call update.bat /auto --force || exit /b 1
+          git diff --quiet -- config.toml || exit /b 1
+          findstr /c:"ci_marker = 1" config.local.toml || exit /b 1
+          .venv\Scripts\python.exe -c "from jarvis.config import Config; assert Config.load().get('files.ci_marker') == 1"
+          del config.local.toml
         if: always()
         shell: cmd
         run: .venv\Scripts\python.exe -m jarvis --report

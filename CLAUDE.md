@@ -26,6 +26,7 @@ set JARVIS_REAL_TESTS=1 && python -m pytest tests\test_real_models.py -v   :: ж
 python -m jarvis --text                      :: текстовый режим для отладки
 python -m jarvis --web --voice               :: HUD + голос (то же, что run_web.bat)
 python -m jarvis --report                    :: отчёт в data\report.txt
+update.bat                                   :: обновление: config.toml → config.local.toml, pull, пакеты
 ```
 
 ## На ПК владельца можно и нужно проверять вживую
@@ -36,6 +37,8 @@ LLM, HUD или браузер рабочими, проверь их по-нас
 
 ## Подводные камни
 
+- Личные настройки владельца — в `config.local.toml` (не в git). `config.toml` в репозитории не
+  менять под конкретный ПК. Тесты грузят `config.toml` явным путём — личный файл к ним не применяется.
 - Тесты на Windows: `write_text` превращает `\r\n` в `\r\r\n`; пути с `\`.
 - Консоль cp1252: в .bat стоит `PYTHONUTF8=1`, в коде — `jarvis.console_utf8()`.
 - Claude-провайдер — постоянный `ClaudeSDKClient` в своём asyncio-таске в потоке «claude-agent»
