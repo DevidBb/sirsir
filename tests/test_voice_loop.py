@@ -204,10 +204,22 @@ def test_exit_by_voice(make_app, capsys):
 
 
 def test_reminder_wakes_idle_loop(make_app, capsys):
-    blocks = silence(3)
-    app = make_app(blocks, [])
-    app.parts.mic.delay = 0.02  # ~2 секунды: фоновая проверка идёт раз в секунду
+    # Тишины с запасом (~20 с): цикл ждёт «Джарвис», пока фоновая проверка (раз в секунду)
+    # не найдёт напоминание. Выход — сразу после того, как его произнесли, а не когда кончится
+    # запись: на медленной машине CI запись успевала кончиться раньше первой проверки.
+    app = make_app(silence(30), [])
+    app.parts.mic.delay = 0.02
+    delivered = threading.Event()
+    deliver = app._deliver_notifications
+
+    def deliver_and_quit():
+        deliver()
+        delivered.set()
+        app.quit()
+
+    app._deliver_notifications = deliver_and_quit
     app.reminders.add("полить цветы", 1)
     app.reminders.clock = lambda: time.time() + 5  # срок наступил, но не «пропущен»
     run(app)
+    assert delivered.is_set(), "напоминание не дошло до голосового цикла за 10 с"
     assert "Напоминание: полить цветы." in capsys.readouterr().out

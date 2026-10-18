@@ -351,6 +351,11 @@ class App:
             return True
         self._state("idle")
         self.wake_interrupt.clear()
+        if self.stop_event.is_set():
+            # «Выход» пришёл раньше (например, пока звучало напоминание): quit() ставит stop_event
+            # до wake_interrupt, и сигнал прерывания мы только что стёрли — без этой проверки
+            # цикл ждал бы «Джарвис» вместо выхода.
+            return False
         if self.force_listen.is_set() or wake.wait(mic.blocks(self.wake_interrupt)):
             heard_wake = not self.force_listen.is_set()
         else:
