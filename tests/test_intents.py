@@ -38,6 +38,7 @@ def test_matches(m, phrase, intent):
 @pytest.mark.parametrize("phrase", [
     "что такое чёрная дыра",
     "открой блокнот и напиши в нём длинное письмо маме про выходные",  # длинная фраза → LLM
+    "всем привет", "напомни всем позвонить", "от мини", "я ты он", "ставь чайник",
     "",
 ])
 def test_no_match(m, phrase):
@@ -103,6 +104,16 @@ def test_timer_without_duration_goes_to_llm(m):
     ("Сверни все окна.", Intent("press_keys", {"keys": "show_desktop"})),
     ("Говори голосом Ксении.", Intent("set_voice", {"voice": "kseniya"})),
     ("говори мужским голосом", Intent("set_voice", {"voice": "male"})),
+    # Как Whisper слышит команды голосом Silero (scripts/benchmark_speech.py)
+    ("Напомни всем вечера купить хлеб", Intent("set_reminder", {"text": "купить хлеб", "at_time": "19:00"})),
+    ("от мини таймер.", Intent("cancel_reminders")),
+    ("с копируй", Intent("press_keys", {"keys": "copy"})),
+    ("за гугли курс доллара", Intent("web_search", {"query": "курс доллара", "site": "google"})),
+    ("Ставь!", Intent("press_keys", {"keys": "paste"})),
+    ("Отмени последние действия", Intent("press_keys", {"keys": "undo"})),
+    ("Добавь заметки позвонить врачу", Intent("add_note", {"text": "позвонить врачу"})),
+    ("Сделай покромче", Intent("media_control", {"action": "volume_up"})),
+    ("прибавь громкости", Intent("media_control", {"action": "volume_up"})),
 ])
 def test_more_everyday_phrases(m, phrase, intent):
     assert m.match(phrase) == intent
@@ -133,3 +144,20 @@ def test_chatgpt_and_twitter_voice_aliases_from_config(config):
     assert matcher.match("открой чатгпт") == Intent("open_website", {"name": "чатгпт"})
     assert matcher.match("открой Twitter") == Intent("open_website", {"name": "twitter"})
     assert matcher.match("открой твиттер") == Intent("open_website", {"name": "твиттер"})
+
+
+def test_benchmark_speech_phrases_are_understood_as_text():
+    # scripts/benchmark_speech.py проверяет их голосом; без распознавания они обязаны проходить.
+    import importlib.util
+
+    from conftest import ROOT
+    from jarvis.config import Config
+    spec = importlib.util.spec_from_file_location("benchmark_speech", ROOT / "scripts" / "benchmark_speech.py")
+    bench = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bench)
+    cfg = Config.load(ROOT / "config.toml")
+    matcher = IntentMatcher(cfg.get("windows.apps", {}), cfg.get("windows.websites", {}),
+                            cfg.get("windows.folders", {}))
+    wrong = [c[0] for c in bench.SPOKEN_COMMANDS if not bench.command_understood(matcher, c[0], c)]
+    assert not wrong
+    assert len(bench.SPOKEN_COMMANDS) >= 50
