@@ -29,21 +29,56 @@ NUMBER_WORDS = {
     "одиннадцать": 11, "двенадцать": 12, "тринадцать": 13, "четырнадцать": 14,
     "пятнадцать": 15, "шестнадцать": 16, "семнадцать": 17, "восемнадцать": 18,
     "девятнадцать": 19, "двадцать": 20, "тридцать": 30, "сорок": 40, "пятьдесят": 50,
+    "шестьдесят": 60, "семьдесят": 70, "восемьдесят": 80, "девяносто": 90,
+    "сто": 100, "двести": 200, "триста": 300, "четыреста": 400, "пятьсот": 500,
+    "шестьсот": 600, "семьсот": 700, "восемьсот": 800, "девятьсот": 900,
+    # Косвенные падежи — для калькулятора: «15 процентов от двух тысяч», «трёх сотен».
+    "одного": 1, "двух": 2, "трех": 3, "четырех": 4, "пяти": 5, "шести": 6, "семи": 7,
+    "восьми": 8, "девяти": 9, "десяти": 10, "двадцати": 20, "тридцати": 30, "сорока": 40,
+    "пятидесяти": 50, "ста": 100, "сотни": 100, "сотен": 100,
 }
+THOUSAND_WORDS = {"тысяча", "тысячи", "тысяч", "тысячу"}
 
 
 def parse_number(text: str) -> int | None:
-    """«5», «пять», «двадцать пять» → int; иначе None."""
-    text = text.strip()
+    """«5», «пять», «двадцать пять», «двести пятьдесят», «две тысячи» → int; иначе None."""
+    text = text.strip().replace("ё", "е")
     if text.isdigit():
         return int(text)
-    total, seen = 0, False
+    total, group, seen, last = 0, 0, False, 10**9
     for word in text.split():
-        if word not in NUMBER_WORDS:
+        if word in THOUSAND_WORDS:
+            if total:
+                return None  # «тысяча тысяч»
+            total, group, last = (group or 1) * 1000, 0, 1000
+            seen = True
+            continue
+        value = NUMBER_WORDS.get(word)
+        # Разряды идут по убыванию и не повторяются: «двадцать пять», но не «пять двадцать».
+        if value is None or value >= last or (value < 10 and last < 20):
             return None
-        total += NUMBER_WORDS[word]
+        group += value
+        last = value if value >= 10 else 0
         seen = True
-    return total if seen else None
+    return total + group if seen else None
+
+
+def numbers_to_digits(text: str) -> str:
+    """«двадцать пять» → «25» (пока подряд идут числительные)."""
+    words, out, buf = text.split(), [], []
+    for w in words + [""]:
+        candidate = " ".join(buf + [w]) if w else None
+        if candidate and parse_number(candidate) is not None and not w.isdigit():
+            buf.append(w)
+            continue
+        if buf:
+            out.append(str(parse_number(" ".join(buf))))
+            buf = []
+        if w and not w.isdigit() and parse_number(w) is not None:
+            buf = [w]  # новое число: «семь тридцать» → «7 30»
+        elif w:
+            out.append(w)
+    return " ".join(out)
 
 
 _UNIT = r"(секунд[уы]?|сек|минут[уы]?|мин|час(?:а|ов)?)"
@@ -57,9 +92,13 @@ def parse_duration(text: str) -> int | None:
     t = normalize(text)
     t = re.sub(r"^(?:на|через) ", "", t)
     special = {"полчаса": 1800, "полтора часа": 5400, "час": 3600, "минуту": 60,
-               "минутку": 60, "пару минут": 120}
+               "минутку": 60, "пару минут": 120, "полторы минуты": 90, "полминуты": 30}
     if t in special:
         return special[t]
+    # Whisper пишет «1,5 минуты», «1.5 часа»; после нормализации — «1 5 минуты».
+    m = re.fullmatch(r"(\d+) 5 (минуты|часа)", t)
+    if m:
+        return (int(m.group(1)) * 2 + 1) * (30 if m.group(2) == "минуты" else 1800)
     m = DURATION_RE.match(t)
     count = None
     if m:

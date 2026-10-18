@@ -91,6 +91,18 @@ def test_timer_without_duration_goes_to_llm(m):
     ("таймер на 1 минуту 30 секунд", Intent("set_timer", {"seconds": 90})),
     ("Поставь будильник на 7:30", Intent("set_reminder", {"text": "Будильник", "at_time": "07:30"})),
     ("разбуди меня в 6 45", Intent("set_reminder", {"text": "Будильник", "at_time": "06:45"})),
+    ("Поставь будильник на семь тридцать.", Intent("set_reminder", {"text": "Будильник", "at_time": "07:30"})),
+    ("Разбуди меня в шесть сорок пять.", Intent("set_reminder", {"text": "Будильник", "at_time": "06:45"})),
+    ("будильник на семь вечера", Intent("set_reminder", {"text": "Будильник", "at_time": "19:00"})),
+    ("Напомни в семь вечера купить хлеб.", Intent("set_reminder", {"text": "купить хлеб", "at_time": "19:00"})),
+    ("Таймер на полторы минуты.", Intent("set_timer", {"seconds": 90})),
+    ("Сколько будет двести пятьдесят умножить на четыре?", Intent("calculate", {"expression": "250*4"})),
+    ("Сколько будет пятнадцать процентов от двух тысяч?", Intent("calculate", {"expression": "2000*15/100"})),
+    ("Добавь в заметки позвонить врачу.", Intent("add_note", {"text": "позвонить врачу."})),
+    ("Какая загрузка процессора?", Intent("system_info")),
+    ("Сверни все окна.", Intent("press_keys", {"keys": "show_desktop"})),
+    ("Говори голосом Ксении.", Intent("set_voice", {"voice": "kseniya"})),
+    ("говори мужским голосом", Intent("set_voice", {"voice": "male"})),
 ])
 def test_more_everyday_phrases(m, phrase, intent):
     assert m.match(phrase) == intent

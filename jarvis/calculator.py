@@ -12,7 +12,7 @@ import math
 import operator
 import re
 
-from .reminders import parse_number
+from .reminders import numbers_to_digits
 from .tool_registry import Param, Tool, ToolRegistry
 
 _BINOPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
@@ -92,26 +92,10 @@ _PERCENT_OF = re.compile(r"^([\d.,]+)\s*(?:%|процент(?:а|ов)?)\s+от\
 _ROOT = re.compile(r"^(?:квадратный )?корень (?:из )?([\d.,]+)$")
 
 
-def _numbers_to_digits(text: str) -> str:
-    """«двадцать пять» → «25» (пока подряд идут числительные)."""
-    words, out, buf = text.split(), [], []
-    for w in words + [""]:
-        candidate = " ".join(buf + [w]) if w else None
-        if candidate and parse_number(candidate) is not None and not w.isdigit():
-            buf.append(w)
-            continue
-        if buf:
-            out.append(str(parse_number(" ".join(buf))))
-            buf = []
-        if w:
-            out.append(w)
-    return " ".join(out)
-
-
 def phrase_to_expression(phrase: str) -> str | None:
     t = phrase.lower().replace("ё", "е").strip(" ?.!")
     t = re.sub(r"^(?:сколько будет|посчитай|вычисли|сколько)\s+", "", t)
-    t = _numbers_to_digits(t)
+    t = numbers_to_digits(t)
     m = _PERCENT_OF.match(t)
     if m:
         return f"{m.group(2)}*{m.group(1)}/100"

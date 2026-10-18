@@ -47,7 +47,7 @@ PUNCTUATION = [
 
 
 # Виртуальные клавиши Windows.
-VK_SHIFT, VK_CONTROL, VK_RETURN = 0x10, 0x11, 0x0D
+VK_SHIFT, VK_CONTROL, VK_RETURN, VK_LWIN = 0x10, 0x11, 0x0D, 0x5B
 # Разрешённые сочетания клавиш: имя → (что сказать в журнал, клавиши по порядку нажатия).
 HOTKEYS: dict[str, tuple[str, list[int]]] = {
     # Shift+Enter: перенос строки и в редакторах, и в мессенджерах (обычный Enter там отправляет).
@@ -59,6 +59,7 @@ HOTKEYS: dict[str, tuple[str, list[int]]] = {
     "paste": ("Ctrl+V", [VK_CONTROL, ord("V")]),
     "close_tab": ("Ctrl+W", [VK_CONTROL, ord("W")]),
     "new_tab": ("Ctrl+T", [VK_CONTROL, ord("T")]),
+    "show_desktop": ("Win+D", [VK_LWIN, ord("D")]),
     # Только после голосового подтверждения (assistant.py).
     "send": ("Enter", [VK_RETURN]),
 }

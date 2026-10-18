@@ -14,7 +14,7 @@ from typing import Any
 from .app_finder import FILE_EXTENSIONS, SEARCH_SITE_RE, site_alias
 from .calculator import phrase_to_expression
 from .fuzzy import nominative
-from .reminders import parse_duration
+from .reminders import numbers_to_digits, parse_duration
 from .security import normalize
 
 
@@ -43,10 +43,16 @@ TIME_PHRASES = ("который час", "сколько времени", "ка�
                 "какой сегодня день", "какой сегодня день недели", "какой день недели",
                 "какое сегодня число и день недели")
 SYSINFO_PHRASES = ("состояние системы", "загрузка системы", "системная информация",
-                   "как там компьютер", "сколько свободно памяти")
+                   "как там компьютер", "сколько свободно памяти", "загрузка процессора",
+                   "какая загрузка процессора", "как загружен процессор", "сколько памяти занято",
+                   "сколько свободной памяти", "сколько места на диске", "сколько свободного места")
 TIMER_RE = re.compile(r"^(?:поставь |заведи |запусти |включи )?таймер (.+)$|^засеки(?: таймер)? (.+)$")
 # «Поставь будильник на 7:30» — Whisper пишет «7:30», после нормализации «7 30».
-ALARM_RE = re.compile(r"^(?:поставь |заведи )?будильник (?:на )?(\d{1,2}) (\d{2})$|^разбуди меня в (\d{1,2}) (\d{2})$")
+# «На семь тридцать», «в шесть утра» — числительные заранее переводятся в цифры.
+ALARM_RE = re.compile(r"^(?:(?:поставь|заведи) )?будильник (?:на )?(?P<h>\d{1,2})(?: (?P<m>\d{2}))?"
+                      r"(?: (?:час|часа|часов))?(?: (?P<p>утра|дня|вечера|ночи))?$"
+                      r"|^разбуди меня (?:в |на )?(?P<h2>\d{1,2})(?: (?P<m2>\d{2}))?"
+                      r"(?: (?:час|часа|часов))?(?: (?P<p2>утра|дня|вечера|ночи))?$")
 REMIND_IN_RE = re.compile(r"^напомни(?: мне)? через (.+)$")
 # «Напомни завтра в 9 позвонить врачу», «напомни в 7 30 вечера …», «напомни в 18 00 …».
 REMIND_AT_RE = re.compile(
@@ -65,7 +71,8 @@ POWER_PATTERNS = [
      "sleep_computer"),
     (re.compile(r"^(?:отмени|отменить|останови) (?:выключение|перезагрузку)$"), "cancel_shutdown"),
 ]
-NOTE_RE = re.compile(r"^(?:запиши|сделай|создай|добавь) (?:мне )?заметку (?:что |о том что )?(.+)$|^заметка (.+)$")
+NOTE_RE = re.compile(r"^(?:запиши|сделай|создай|добавь) (?:мне )?заметку (?:что |о том что )?(.+)$|^заметка (.+)$"
+                     r"|^(?:запиши|добавь) в заметки (?:что )?(.+)$")
 READ_NOTES = ("прочитай заметки", "какие у меня заметки", "мои заметки", "покажи заметки",
               "что в заметках", "прочитай мои заметки")
 CALC_START = re.compile(r"^(?:сколько будет|посчитай|вычисли|корень|квадратный корень)\b")
@@ -96,6 +103,7 @@ HOTKEY_PHRASES = {
     "paste": ("вставить", "вставь", "вставь текст"),
     "close_tab": ("закрой вкладку", "закрыть вкладку"),
     "new_tab": ("новая вкладка", "открой новую вкладку", "новую вкладку"),
+    "show_desktop": ("сверни все окна", "сверни все", "сверни окна", "покажи рабочий стол"),
 }
 # Enter — отдельно: отправка сообщения только после «подтверждаю».
 SEND_PHRASES = ("отправь", "отправить", "отправь сообщение", "отправить сообщение", "отправляй")
@@ -116,9 +124,23 @@ ACTION_CHAIN_RE = re.compile(r"\b(?:и|потом|затем|а потом)\s+(?
 # Смена голоса: «смени голос», «голос бая», «женский голос», «поставь голос евгений».
 VOICE_NAMES = {"айдар": "aidar", "евгений": "eugene", "женя": "eugene", "бая": "baya", "байя": "baya",
                "ксения": "kseniya", "ксюша": "xenia"}
+
+
+def _voice_by_name(word: str) -> str | None:
+    """«ксения», «ксении», «евгением» → голос Silero: имя в любом падеже."""
+    if word in VOICE_NAMES:
+        return VOICE_NAMES[word]
+    for name, voice in VOICE_NAMES.items():
+        stem = name[:-1] if len(name) > 3 else name  # «ксени», «айда», «евгени», «ба»
+        if len(stem) >= 3 and word.startswith(stem) and len(word) - len(stem) <= 3:
+            return voice
+    return None
+
+
 NEXT_VOICE = ("смени голос", "другой голос", "следующий голос", "поменяй голос", "измени голос")
 VOICE_RE = re.compile(r"^(?:(?:поставь|включи|сделай|давай|выбери|смени на|поменяй на) )?"
-                      r"(?:(мужской|женский) голос|голос (\w+))$")
+                      r"(?:(мужской|женский) голос|голос (\w+))$"
+                      r"|^(?:говори|разговаривай|отвечай)(?: со мной)? (?:(мужским|женским) голосом|голосом (\w+))$")
 
 
 # Поиск: «найди на ютубе котиков», «открой ютуб и включи lofi», «загугли погоду»,
@@ -178,6 +200,15 @@ def _lookup(name: str, table: dict[str, str]) -> str | None:
     return None
 
 
+def _hour_24(hour: int, part: str | None) -> int:
+    """«7 вечера» → 19, «12 ночи» → 0."""
+    if part in ("дня", "вечера") and hour < 12:
+        return hour + 12
+    if part == "ночи" and hour == 12:
+        return 0
+    return hour
+
+
 class IntentMatcher:
     def __init__(self, apps: dict[str, str], websites: dict[str, str],
                  folders: dict[str, str] | None = None, music_site: str = "youtube"):
@@ -199,10 +230,12 @@ class IntentMatcher:
             return Intent("set_voice", {"voice": "next"})
         m = VOICE_RE.match(norm)
         if m:
-            if m.group(1):
-                return Intent("set_voice", {"voice": "male" if m.group(1) == "мужской" else "female"})
-            if m.group(2) in VOICE_NAMES:
-                return Intent("set_voice", {"voice": VOICE_NAMES[m.group(2)]})
+            gender, name = m.group(1) or m.group(3), m.group(2) or m.group(4)
+            if gender:
+                return Intent("set_voice", {"voice": "male" if gender.startswith("мужск") else "female"})
+            voice = _voice_by_name(name)
+            if voice:
+                return Intent("set_voice", {"voice": voice})
         m = TYPE_INTO_RE.match(text)
         if m:
             return Intent("type_in_window", {"window": m.group(1), "text": m.group(2).strip()})
@@ -233,8 +266,8 @@ class IntentMatcher:
         m = NOTE_RE.match(norm)
         if m:
             # Текст заметки берём из исходной фразы, чтобы сохранить регистр и знаки.
-            body = m.group(1) or m.group(2)
-            original = re.split(r"(?i)заметк[ау]\s*(?:что\s+|о том что\s+)?", text.strip(), maxsplit=1)
+            body = m.group(1) or m.group(2) or m.group(3)
+            original = re.split(r"(?i)заметк(?:[ау]|и)\s*(?:что\s+|о том что\s+)?", text.strip(), maxsplit=1)
             note = original[1].strip(" ,:") if len(original) == 2 and original[1].strip() else body
             return Intent("add_note", {"text": note})
         if norm in READ_NOTES:
@@ -324,19 +357,17 @@ class IntentMatcher:
         if m:
             seconds = parse_duration(m.group(1) or m.group(2))
             return Intent("set_timer", {"seconds": seconds}) if seconds else None
-        m = ALARM_RE.match(norm)
+        timed = numbers_to_digits(norm)  # «в семь тридцать вечера» → «в 7 30 вечера»
+        m = ALARM_RE.match(timed)
         if m:
-            hour, minute = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
-            if int(hour) <= 23 and int(minute) <= 59:
-                return Intent("set_reminder", {"text": "Будильник", "at_time": f"{int(hour):02d}:{minute}"})
+            hour = _hour_24(int(m.group("h") or m.group("h2")), m.group("p") or m.group("p2"))
+            minute = int(m.group("m") or m.group("m2") or 0)
+            if hour <= 23 and minute <= 59:
+                return Intent("set_reminder", {"text": "Будильник", "at_time": f"{hour:02d}:{minute:02d}"})
             return None
-        m = REMIND_AT_RE.match(norm)
+        m = REMIND_AT_RE.match(timed)
         if m:
-            hour, minute = int(m.group("h")), int(m.group("m") or 0)
-            if m.group("p") in ("дня", "вечера") and hour < 12:
-                hour += 12
-            elif m.group("p") == "ночи" and hour == 12:
-                hour = 0
+            hour, minute = _hour_24(int(m.group("h")), m.group("p")), int(m.group("m") or 0)
             if hour > 23 or minute > 59:
                 return None
             args = {"text": m.group("t"), "at_time": f"{hour:02d}:{minute:02d}"}
