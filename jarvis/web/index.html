@@ -96,6 +96,7 @@
       <button type="button" data-say="посмотри на экран и объясни, что происходит">Что на экране</button>
       <button type="button" data-say="мои напоминания">Напоминания</button>
       <button type="button" data-say="открой ютуб">YouTube</button>
+      <button type="button" data-fill="сделай новый сайт для ">Сайт для бизнеса</button>
       <button type="button" data-say="новый диалог">Новый разговор</button>
     </div>
   </section>
@@ -103,6 +104,7 @@
   <aside class="side-col" aria-label="Подробности">
     <nav class="tabs" role="tablist">
       <button class="tab active" role="tab" aria-selected="true" aria-controls="tab-timeline" data-tab="timeline">Шаги</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="tab-projects" data-tab="projects">Проекты</button>
       <button class="tab" role="tab" aria-selected="false" aria-controls="tab-results" data-tab="results">Результаты</button>
       <button class="tab" role="tab" aria-selected="false" aria-controls="tab-memory" data-tab="memory">Память</button>
       <button class="tab" role="tab" aria-selected="false" aria-controls="tab-schedule" data-tab="schedule">Расписание</button>
@@ -112,6 +114,13 @@
     <div class="panel active" id="tab-timeline">
       <ol class="timeline" id="timeline"></ol>
       <p class="empty" id="timelineEmpty">Здесь появятся шаги задачи: какая модель отвечает, какие инструменты запускаются и чем закончились.</p>
+    </div>
+
+    <div class="panel" id="tab-projects">
+      <div id="project">
+        <p class="empty">Скажите «Джарвис, сделай новый сайт для …» — здесь появятся задачи студии сайтов:
+          разбор старого сайта, стиль и тексты, вёрстка, проверка качества «до → после» и предложения правок.</p>
+      </div>
     </div>
 
     <div class="panel" id="tab-results">

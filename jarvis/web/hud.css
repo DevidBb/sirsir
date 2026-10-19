@@ -353,6 +353,40 @@ code { font: 13px var(--code); }
 .level { height: 6px; border-radius: 3px; overflow: hidden; background: var(--night); border: 1px solid var(--seam-2); }
 .level-bar { height: 100%; width: 0; background: var(--signal); transition: width .12s; }
 
+/* --- студия сайтов: задачи (как карточки в ролике), результат, предложения --- */
+.jobs { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.job { padding: 10px 12px; border: 1px solid var(--seam-2); border-radius: 9px; background: var(--hull); }
+.job-top { display: flex; gap: 10px; align-items: baseline; }
+.job-status { flex: none; font: 600 12px/1.6 var(--display); text-transform: uppercase; letter-spacing: .06em; color: var(--ash); padding: 0 7px; border-radius: 4px; border: 1px solid var(--seam-2); }
+.job-title { font: 600 14.5px/1.35 var(--display); }
+.job-detail { margin: 4px 0 0; color: var(--ash); font-size: 13px; overflow-wrap: anywhere; }
+.job.run { border-color: rgba(var(--signal-rgb), .7); box-shadow: 0 0 0 1px rgba(var(--signal-rgb), .25), 0 0 18px rgba(var(--signal-rgb), .12); }
+.job.run .job-status { color: var(--on-signal); background: var(--signal); border-color: var(--signal); animation: blink 1.2s steps(2, jump-none) infinite; }
+.job.ok .job-status { color: var(--ok); border-color: rgba(73, 214, 155, .5); }
+.job.fail .job-status { color: var(--danger); border-color: rgba(255, 90, 100, .5); }
+.job.skip { opacity: .65; }
+.job.wait .job-title { color: var(--ash); }
+.site-result { margin-top: 12px; }
+.site-meta { margin: 0 0 8px; font: 13.5px var(--display); color: var(--ash); }
+.site-shots { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; }
+.site-shot { display: block; max-width: 100%; border-radius: 8px; border: 1px solid var(--seam-2); }
+.site-shot.phone { width: 92px; }
+.site-card .site-shot.phone { width: 78px; }
+.scores { margin: 12px 0 4px; display: grid; gap: 6px; }
+.scores-head { margin: 0 0 2px; font: 600 14px var(--display); }
+.score-row { display: grid; grid-template-columns: minmax(96px, 9.5em) 1fr auto; gap: 10px; align-items: center; font-size: 13.5px; }
+.score-label { color: var(--ash); }
+.score-bars { display: grid; gap: 3px; }
+.bar { display: block; height: 6px; border-radius: 3px; min-width: 2px; }
+.bar.before { background: var(--seam-2); }
+.bar.after { background: var(--signal); box-shadow: 0 0 8px rgba(var(--signal-rgb), .45); }
+.score-num { font: 600 13.5px var(--display); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.site-acts { margin-top: 10px; }
+.site-before { margin-top: 10px; }
+.site-before summary { cursor: pointer; font: 14px var(--display); color: var(--ash); margin-bottom: 6px; }
+.proposals { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.proposal { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid rgba(var(--signal-rgb), .35); border-radius: 9px; background: rgba(var(--signal-rgb), .05); font-weight: 600; }
+
 /* --- окно обновления --- */
 .dialog {
   width: min(620px, calc(100vw - 32px)); max-height: min(80vh, 640px); overflow: auto; padding: 20px 22px;
@@ -399,4 +433,5 @@ code { font: 13px var(--code); }
 @media (prefers-reduced-motion: reduce) {
   .eye::before, .eye-rings .arc, .eye-rings .ticks-major, .entry.streaming .body::after, .timeline li.run::before { animation: none !important; }
   .eye-core, .eye::before { transition: none; }
+  .job.run .job-status { animation: none !important; }
 }

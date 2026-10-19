@@ -289,7 +289,7 @@ class BrowserController:
             self._thread.join(timeout=10)
 
     # --- действия (выполняются в служебном потоке) ---
-    def _run(self, fn: Callable[[], Any]) -> Any:
+    def _run(self, fn: Callable[[], Any], timeout: float | None = None) -> Any:
         def job():
             self._ensure()
             try:
@@ -304,7 +304,7 @@ class BrowserController:
                 self._ensure()
                 return fn()
         try:
-            result = self.call(job)
+            result = self.call(job, timeout)
             self.last_error = ""
             return result
         except BrowserError as e:
@@ -387,6 +387,33 @@ class BrowserController:
                 return PageInfo(page.title(), page.url, text[:max_text], [])
             finally:
                 page.close()
+        return self._run(go)
+
+    def with_temp_page(self, fn: Callable[[Any], Any], timeout: float | None = None) -> Any:
+        """Только для встроенных модулей (проверка сайтов): fn(page) во временной вкладке,
+        которая потом закрывается; текущая вкладка не меняется."""
+        def go():
+            self._temp_page = True
+            try:
+                page = self.context.new_page()
+            finally:
+                self._temp_page = False
+            try:
+                return fn(page)
+            finally:
+                page.close()
+        return self._run(go, timeout)
+
+    def show_file(self, path: str | Path) -> PageInfo:
+        """Открыть локальный файл (сайт, который сделал Джарвис) в новой вкладке.
+        Модели недоступно: инструменты открывают только http(s)."""
+        uri = Path(path).resolve().as_uri()
+
+        def go():
+            self.page = self.context.new_page()
+            self.page.goto(uri, wait_until="domcontentloaded")
+            self.page.bring_to_front()
+            return self._info(with_elements=False)
         return self._run(go)
 
     def read(self, max_text: int = MAX_TEXT) -> PageInfo:

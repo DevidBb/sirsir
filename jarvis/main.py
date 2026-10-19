@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from . import calculator, checks, console_utf8, files, mcp_client, skills
+from . import calculator, checks, console_utf8, files, mcp_client, site_studio, skills
 from .assistant import EXIT, MUTE, STOP, Assistant, Reply
 from .config import Config, load_dotenv
 from .gemini import GEMINI_HOST, GeminiClient, api_key as gemini_key, make_llm
@@ -105,6 +105,11 @@ class App:
         # Навыки: skills/<имя>/SKILL.md — инструкция и набор инструментов для повторяемых задач.
         self.skills = skills.setup(config, self.registry)
         self.assistant.skills = self.skills
+        # Студия сайтов: «сделай сайт для …» — разбор старого сайта, тексты моделью, вёрстка, проверка.
+        self.sites = site_studio.setup(config, self.assistant, self.browser,
+                                       self.web_tools.search if self.web_tools else None)
+        self.sites.register_tools(self.registry)
+        self.assistant.sites = self.sites
 
     def _setup_browser(self) -> None:
         """Браузер Джарвиса (Playwright). Без Playwright помощник работает как раньше."""

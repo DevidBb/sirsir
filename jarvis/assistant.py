@@ -261,6 +261,8 @@ class Assistant:
         self.on_event: Callable[[dict], None] = lambda event: None
         # Внешний агент (Claude Agent SDK) вместо цикла Ollama, см. providers.py.
         self.agent_backend: Any = None
+        # Студия сайтов («сделай сайт для …», см. site_studio.py).
+        self.sites: Any = None
         # Навыки (skills/*/SKILL.md) и навык, действующий в текущей задаче.
         self.skills: Any = None
         self.active_skill: Any = None
@@ -338,6 +340,10 @@ class Assistant:
         builtin = self._builtin(text)
         if builtin is not None:
             return builtin
+
+        site = self._site_command(text, on_sentence)
+        if site is not None:
+            return site
 
         composite = self._composite(text)
         if composite is not None:
@@ -592,36 +598,9 @@ class Assistant:
             and (provider == "claude" or (provider == "hybrid" and PROMPT_REQUEST_RE.search(request) is not None))
         )
         if use_claude:
-            # Изолированная копия Assistant и навык без разрешённых инструментов:
-            # Claude может написать текст, но не может открыть сайт/файл или нажать кнопку.
-            import copy
-
-            class ComposeOnlySkill:
-                name = "compose-text"
-                description = "Создание текста без действий в приложениях."
-                def prompt(self) -> str:
-                    return system_prompt + "\nИнструменты отключены. Выведи только готовый текст."
-                def allows(self, tool_name: str) -> bool:
-                    return False
-
-            isolated = copy.copy(self)
-            isolated.conversation = Conversation(self.conversation.max_turns)
-            isolated.active_skill = ComposeOnlySkill()
-            isolated.remember_task = lambda *args, **kwargs: None  # не засорять историю задач
-            # Отдельная сессия Claude, затем возврат к диалогу пользователя (как в run_unattended):
-            # reset() здесь стёр бы весь разговор с Claude.
-            saved_session = getattr(self.agent_backend, "session_id", None)
-            self.agent_backend.session_id = None
-            try:
-                generated = self.agent_backend.run(isolated, request, None)
-                if generated.ok and generated.text.strip():
-                    draft = generated.text.strip()
-                else:
-                    log.warning("Claude не составил текст; пробую локальную Ollama: %s", generated.text)
-            except Exception:
-                log.exception("Не удалось составить текст через Claude; пробую локальную Ollama")
-            finally:
-                self.agent_backend.session_id = saved_session
+            draft = self._claude_text(system_prompt, request)
+            if draft is None:
+                log.warning("Claude не составил текст; пробую локальную Ollama")
 
         if draft is None:
             messages = [{"role": "system", "content": system_prompt},
@@ -660,6 +639,105 @@ class Assistant:
         destination = f"в окне {target_window}" if target_window else "в активное окно"
         return Reply(f"Вот что получилось: {preview} " + self.confirmations.request(
             f"напечатать этот текст {destination}", type_draft))
+
+    def _claude_text(self, system_prompt: str, request: str, stream: bool = True) -> str | None:
+        """Текст от Claude без инструментов, в отдельной сессии; None — Claude не ответил.
+        stream=False — не показывать текст в чате HUD по мере генерации (например, JSON сайта)."""
+        import copy
+
+        class TextOnlySkill:
+            name = "compose-text"
+            description = "Создание текста без действий в приложениях."
+            def prompt(self) -> str:
+                return system_prompt + "\nИнструменты отключены. Выведи только готовый текст."
+            def allows(self, tool_name: str) -> bool:
+                return False
+
+        # Изолированная копия Assistant и навык без разрешённых инструментов:
+        # Claude может написать текст, но не может открыть сайт/файл или нажать кнопку.
+        isolated = copy.copy(self)
+        isolated.conversation = Conversation(self.conversation.max_turns)
+        isolated.active_skill = TextOnlySkill()
+        isolated.remember_task = lambda *args, **kwargs: None  # не засорять историю задач
+        if not stream:
+            emit = self.on_event
+            isolated.on_event = lambda event: None if event.get("type") in ("delta", "delta_end") else emit(event)
+        # Отдельная сессия Claude, затем возврат к диалогу пользователя (как в run_unattended):
+        # reset() здесь стёр бы весь разговор с Claude.
+        saved_session = getattr(self.agent_backend, "session_id", None)
+        self.agent_backend.session_id = None
+        try:
+            generated = self.agent_backend.run(isolated, request, None)
+            if generated.ok and generated.text.strip():
+                return generated.text.strip()
+            log.warning("Claude не составил текст: %s", generated.text)
+        except Exception:
+            log.exception("Не удалось составить текст через Claude")
+        finally:
+            self.agent_backend.session_id = saved_session
+        return None
+
+    def write_structured(self, system_prompt: str, request: str, max_tokens: int = 3000) -> tuple[str, str]:
+        """Большой структурированный ответ (JSON сайта) → (текст, какая модель писала).
+        Claude — если выбран (или гибрид: задача тяжёлая), иначе Ollama/Gemini; LLMError — наружу."""
+        provider = str(self.config.get("llm.provider", "ollama")).lower()
+        if self.agent_backend is not None and provider in ("claude", "hybrid"):
+            text = self._claude_text(system_prompt, request, stream=False)
+            if text:
+                return text, "Claude"
+            self.emit({"type": "notice", "text": "Claude не ответил — пишу тексты локальной моделью."})
+        kwargs: dict[str, Any] = {"options": {"num_predict": max_tokens, "temperature": 0.7}}
+        if isinstance(self.llm, OllamaClient):
+            kwargs["fmt"] = "json"  # режим JSON Ollama: маленькая модель не сбивается на рассуждения
+        message = self.llm.chat([{"role": "system", "content": system_prompt},
+                                 {"role": "user", "content": request}], **kwargs)
+        kind = "Gemini" if type(self.llm).__name__ == "GeminiClient" else "Ollama"
+        return message.get("content") or "", f"{kind} {getattr(self.llm, 'model', '')}".strip()
+
+    # --- студия сайтов ---
+    def _site_command(self, text: str, on_sentence: Callable[[str], bool] | None) -> Reply | None:
+        """«Сделай сайт для …», «измени сайт: …», «покажи сайт». None — реплика не про сайты."""
+        from .site_studio import (FOLDER_RE, REVISE_HINT_RE, SHOW_RE, parse_revision,
+                                  parse_site_request)
+        studio = self.sites
+        if studio is None or self.unattended:
+            return None
+        bare = LEAD_WORDS_RE.sub("", text).strip(" .!?")
+        if SHOW_RE.match(bare):
+            return Reply(studio.open_last())
+        if FOLDER_RE.match(bare):
+            return Reply(studio.open_folder())
+        request = parse_site_request(text)
+        instruction = None
+        has_site = studio.last() is not None
+        if request is not None and not request.url and has_site:
+            if request.target and REVISE_HINT_RE.match(request.target):
+                instruction = bare  # «сделай сайт темнее» — правка, а не сайт для «темнее»
+            elif request.redo and not request.target:
+                return Reply(f"Что поменять на сайте, {studio.address}? Например: «измени сайт: сделай тёмную тему».")
+        if request is None:
+            instruction = parse_revision(text) if has_site else None
+            if instruction is None:
+                return None
+        if not self.guard.allow_action():
+            return Reply("Слишком много действий за минуту, действие заблокировано.")
+        self.emergency.reset()
+        muted = False
+
+        def say(line: str) -> None:
+            nonlocal muted
+            if on_sentence is not None and not muted and on_sentence(line) is False:
+                muted = True  # перебили голосом — молчим, но работу не бросаем
+
+        cancelled = lambda: self.emergency.active  # noqa: E731
+        if instruction is not None:
+            outcome = studio.revise(instruction, say, cancelled)
+        else:
+            outcome = studio.build(request, say, cancelled)
+        self.conversation.begin_turn(text)
+        self.conversation.add({"role": "assistant", "content": outcome.text})
+        self.conversation.end_turn()
+        return Reply(outcome.text, data=outcome.data, ok=outcome.ok)
 
     def _resolve_choice(self, text: str) -> Reply | None:
         """Ответ на «Нашёл несколько вариантов…». None — это не выбор, обычная реплика."""
