@@ -563,7 +563,7 @@ class Assistant:
             reply = self.agent_backend.run(self, prompt, None, image=image)
             reply.data = reply.data or data
             return reply
-        vision_model = str(self.config.get("llm.vision_model", "") or "")
+        vision_model = str(getattr(self.llm, "vision_model", "") or self.config.get("llm.vision_model", "") or "")
         if not vision_model:
             return Reply("Снимок экрана сделал, но описать его не могу: локальная модель "
                          f"{self.config.get('llm.model')} не понимает изображения. Выберите Claude "
@@ -853,7 +853,7 @@ class Assistant:
         except LLMError as e:
             log.error("LLM: %s", e)
             self.conversation.abort_turn()
-            return Reply("Языковая модель недоступна. Проверьте, что Ollama запущена.", ok=False)
+            return Reply(f"Языковая модель недоступна. {getattr(self.llm, 'hint', OllamaClient.hint)}", ok=False)
 
     def _run_tool(self, name: str, args: dict) -> str | Reply:
         try:

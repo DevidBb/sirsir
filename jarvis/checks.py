@@ -91,6 +91,15 @@ def check_claude(config: Config) -> list[CheckResult]:
     return [CheckResult("Claude Agent SDK", ok, note)]
 
 
+def check_gemini(config: Config) -> list[CheckResult]:
+    if str(config.get("llm.provider", "ollama")) != "gemini":
+        return []
+    from .gemini import KEY_ENV, api_key
+    ok = bool(api_key())
+    return [CheckResult("Gemini", ok, "ключ найден" if ok else
+                        f"нет ключа; добавьте {KEY_ENV}=... в .env (https://aistudio.google.com/apikey)")]
+
+
 def check_browser(config: Config) -> list[CheckResult]:
     """Playwright и его Chromium: нужны для поиска и управления браузером (не обязательны)."""
     if not config.get("browser.enabled", True):
@@ -192,7 +201,8 @@ def check_silero(config: Config) -> list[CheckResult]:
 
 def run_all(config: Config, voice: bool = True) -> list[CheckResult]:
     results = [check_python(), *check_packages(voice, config), *check_ollama(config),
-               *check_claude(config), *check_browser(config)]
+               *check_claude(config), *check_gemini(config),
+               *check_browser(config)]
     if voice:
         results += [check_vosk_model(config), check_whisper_model(config), check_gpu(),
                     check_microphone(config)]

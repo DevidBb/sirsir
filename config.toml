@@ -76,7 +76,8 @@ autostart_ollama = true
 max_tool_calls_per_turn = 3
 # Режим модели:
 # "hybrid" — быстрые команды локально; короткие вопросы к Ollama; сложные и актуальные запросы к Claude.
-# "ollama" — только локальная модель; "claude" — Claude Agent SDK для всех запросов, требующих LLM.
+# "ollama" — только локальная модель; "claude" — Claude Agent SDK для всех запросов, требующих LLM;
+# "gemini" — Gemini (облако Google, бесплатный тариф) вместо Ollama, нужен GEMINI_API_KEY в .env.
 # Для Claude нужна авторизация "claude login" или ANTHROPIC_API_KEY в окружении.
 # При отсутствии пакета Claude гибридный режим автоматически оставляет все ответы локальными.
 # Переключение: HUD → Настройки → Модель.
@@ -84,6 +85,16 @@ provider = "hybrid"
 # Модель Ollama с поддержкой изображений для «посмотри на экран» (пусто — нет;
 # например "qwen2.5vl:7b", ~6 ГБ: ollama pull qwen2.5vl:7b). С провайдером claude не нужна.
 vision_model = ""
+
+[llm.gemini]
+# Модель Gemini (бесплатный тариф). Самые новые («gemini-flash-latest», 3.7/3.8) часто перегружены
+# и отвечают по 30-60 с; 3.6 отвечает за ~1.5 с. Список моделей: https://ai.google.dev/gemini-api/docs/models
+model = "gemini-3.6-flash"
+# Если основная перегружена или не ответила за timeout_seconds — тот же запрос к этой ("" — не пробовать).
+fallback_model = "gemini-3.5-flash"
+# Сколько модели «думать» перед ответом: "low" — быстро, "" — по умолчанию модели (в разы дольше).
+reasoning_effort = "low"
+timeout_seconds = 30
 
 [llm.claude]
 # Пусто — модель Claude Code по умолчанию; можно "sonnet", "opus", "haiku" или полный id.

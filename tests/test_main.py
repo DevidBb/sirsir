@@ -41,3 +41,16 @@ def test_text_mode_reminder_end_to_end(config, capsys):
     due = app.reminders.pop_due()
     assert len(due) == 1 and due[0][1] == "timer"
     app.close()
+
+
+def test_switch_to_gemini_swaps_llm_client(config, monkeypatch):
+    from jarvis.gemini import GeminiClient
+    from jarvis.llm import OllamaClient
+    monkeypatch.setattr(OllamaClient, "unload", lambda self: None)
+    app = App(config, voice=False)
+    app.set_provider("gemini")
+    assert isinstance(app.llm, GeminiClient) and app.assistant.llm is app.llm
+    assert app.assistant.agent_backend is None
+    app.set_provider("ollama")
+    assert isinstance(app.llm, OllamaClient) and app.assistant.llm is app.llm
+    app.close()

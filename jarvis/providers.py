@@ -2,6 +2,8 @@
 
 * ``ollama`` (по умолчанию) — локальная модель через Ollama; цикл инструментов
   в ``Assistant._ask_llm``. Ничего не уходит в интернет.
+* ``gemini`` — Gemini через OpenAI-совместимый API Google (``gemini.py``); тот же цикл
+  инструментов, что у Ollama, но модель в облаке. Нужен ``GEMINI_API_KEY`` в .env.
 * ``claude`` — официальный Claude Agent SDK (``claude-agent-sdk``). Запросы и
   результаты инструментов отправляются в облако Anthropic. Нужна авторизация
   Claude Code (``claude login``) или переменная ``ANTHROPIC_API_KEY``.
@@ -35,6 +37,7 @@ PROVIDERS = {
     "hybrid": "Гибрид — быстрые команды и простые вопросы локально; сложные задачи через Claude",
     "ollama": "Ollama — локальная модель, данные не покидают компьютер",
     "claude": "Claude (Agent SDK) — облако Anthropic, запросы уходят в интернет",
+    "gemini": "Gemini — облако Google (бесплатный тариф с лимитами), запросы уходят в интернет",
 }
 
 AGENT_PROMPT = """Ты — {name}, персональный ИИ-ассистент пользователя (ОС: {os}).
@@ -457,8 +460,12 @@ def make_agent_backend(config) -> ClaudeAgentBackend | None:
 
 
 def provider_status(config) -> dict[str, Any]:
+    from .gemini import DEFAULT_MODEL, KEY_ENV, api_key
     ok, note = ClaudeAgentBackend.available()
     return {"active": str(config.get("llm.provider", "ollama")), "options": PROVIDERS,
             "claude": {"available": ok, "note": note, "model": config.get("llm.claude.model", "")},
+            "gemini": {"available": bool(api_key()),
+                       "note": "ключ найден" if api_key() else f"нет ключа {KEY_ENV} в .env",
+                       "model": config.get("llm.gemini.model", "") or DEFAULT_MODEL},
             "ollama": {"model": config.get("llm.model"), "url": config.get("llm.base_url")},
             "checked_at": time.time()}

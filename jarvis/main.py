@@ -20,7 +20,7 @@ from typing import Any, Callable
 from . import calculator, checks, console_utf8, files, mcp_client, skills
 from .assistant import EXIT, MUTE, STOP, Assistant, Reply
 from .config import Config, load_dotenv
-from .llm import OllamaClient
+from .gemini import GEMINI_HOST, GeminiClient, api_key as gemini_key, make_llm
 from .memory import Memory
 from .notes import Notes
 from .providers import make_agent_backend
@@ -74,13 +74,8 @@ class App:
         self.memory = Memory(config.path("memory.db_path"), int(config.get("memory.max_facts", 200)))
         self._apply_saved_settings()
 
-        self.llm = OllamaClient(
-            config.get("llm.base_url"), config.get("llm.model"),
-            temperature=float(config.get("llm.temperature", 0.4)),
-            num_predict=int(config.get("llm.num_predict", 220)),
-            num_ctx=int(config.get("llm.num_ctx", 8192)),
-            timeout=float(config.get("llm.timeout_seconds", 90)),
-            keep_alive=str(config.get("llm.keep_alive", "30m")))
+        # Ollama или Gemini — для цикла инструментов (Claude работает отдельно, см. providers.py).
+        self.llm = make_llm(config)
         self.speaker = make_speaker(config, voice)
 
         self.registry = ToolRegistry()
@@ -139,6 +134,9 @@ class App:
             raise ValueError(f"Неизвестный провайдер: {provider}")
         self.config.set("llm.provider", provider)
         self.memory.set_setting("llm.provider", provider)
+        if (provider == "gemini") != isinstance(self.llm, GeminiClient):  # Claude и гибрид оставляют Ollama
+            self.llm.unload()
+            self.llm = self.assistant.llm = make_llm(self.config)
         if self.assistant.agent_backend is not None:
             self.assistant.agent_backend.close()
         self.assistant.agent_backend = make_agent_backend(self.config)
@@ -711,7 +709,10 @@ def main(argv: list[str] | None = None) -> int:
             print("Исправьте ошибки выше или запустите с --skip-check.")
             return 1
 
-    NetworkGuard(config.get("security.allowed_hosts", ["127.0.0.1", "localhost"])).install()
+    hosts = list(config.get("security.allowed_hosts", ["127.0.0.1", "localhost"]))
+    if gemini_key():  # Gemini — HTTPS из процесса помощника, только к API Google
+        hosts.append(GEMINI_HOST)
+    NetworkGuard(hosts).install()
     if args.web:
         from . import web_app
 

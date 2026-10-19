@@ -121,7 +121,7 @@
       v.enabled ? "Микрофон выключен. Напишите, что сделать." : "Напишите, что сделать.";
   }
 
-  // Модель: Гибрид / Ollama / Claude — переключатель вверху.
+  // Модель: Гибрид / Ollama / Claude / Gemini — переключатель вверху.
   function setProvider(p) {
     document.querySelectorAll("#modeSwitch [data-provider]").forEach(b =>
       b.setAttribute("aria-checked", String(b.dataset.provider === p)));
@@ -777,7 +777,10 @@
       const r = document.createElement("input"); r.type = "radio"; r.name = "prov"; r.checked = s.provider.active === key;
       r.onchange = async () => { await api("/api/settings", { method: "POST", body: JSON.stringify({ provider: key }) }); refreshStatus(); };
       const t = document.createElement("div");
-      const extra = key === "claude"
+      const gem = s.provider.gemini || {};
+      const extra = key === "gemini"
+        ? (gem.available ? ` Модель: ${gem.model}. Ключ найден.` : ` Недоступно: ${gem.note}.`)
+        : key === "claude"
         ? (s.provider.claude.available ? ` Модель: ${s.provider.claude.model || "по умолчанию"}. ${s.provider.claude.note}.` : ` Недоступно: ${s.provider.claude.note}.`)
         : key === "hybrid"
           ? ` Короткие вопросы: Ollama (${s.provider.ollama.model}); сложные и актуальные: Claude. ` +
@@ -785,7 +788,7 @@
             (s.ollama_ready === false ? " Ollama не отвечает или модель не скачана." : "")
           : ` Модель: ${s.provider.ollama.model}.` + (s.ollama_ready === false ? " Ollama не отвечает или модель не скачана." : "");
       t.innerHTML = `<div><b></b></div><div class="pnote"></div>`;
-      t.querySelector("b").textContent = key === "claude" ? "Claude (Agent SDK)" : key === "hybrid" ? "Гибрид (Ollama + Claude)" : "Ollama";
+      t.querySelector("b").textContent = key === "claude" ? "Claude (Agent SDK)" : key === "gemini" ? "Gemini (Google)" : key === "hybrid" ? "Гибрид (Ollama + Claude)" : "Ollama";
       t.querySelector(".pnote").textContent = note + "." + extra;
       d.append(r, t); pv.appendChild(d);
     });
@@ -793,6 +796,12 @@
     claude.disabled = !s.provider.claude.available && s.provider.active !== "claude";
     claude.title = s.provider.claude.available ? "Все вопросы к модели — Claude (облако Anthropic)"
       : "Claude недоступен: " + s.provider.claude.note;
+    const gemini = document.querySelector('#modeSwitch [data-provider="gemini"]');
+    if (gemini && s.provider.gemini) {
+      gemini.disabled = !s.provider.gemini.available && s.provider.active !== "gemini";
+      gemini.title = s.provider.gemini.available ? "Все вопросы к модели — Gemini (облако Google)"
+        : "Gemini недоступен: " + s.provider.gemini.note;
+    }
     renderSkills(s.skills || []);
     const tl = $("tools"); tl.innerHTML = "";
     s.tools.forEach(t => {

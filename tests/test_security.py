@@ -142,3 +142,22 @@ def test_read_only_actions_have_separate_higher_limit():
     guard = CommandGuard(4, 2, clock=lambda: 0.0)
     assert guard.allow_action() and guard.allow_action() and not guard.allow_action()
     assert sum(guard.allow_action(read_only=True) for _ in range(20)) == 2 * CommandGuard.READ_FACTOR
+
+
+def test_network_guard_allows_ips_of_allowed_hostname(monkeypatch):
+    """Соединение идёт по IP: адреса разрешённого имени (API Gemini) тоже разрешены, чужие — нет."""
+    def fake_getaddrinfo(host, *args, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.7", 443)),
+                (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2001:db8::7%3", 443, 0, 0))]
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+    guard = NetworkGuard(["127.0.0.1", "api.example.test"])
+    guard.install()
+    try:
+        assert not guard.is_allowed("203.0.113.7")
+        socket.getaddrinfo("api.example.test", 443)
+        assert guard.is_allowed("203.0.113.7") and guard.is_allowed("2001:db8::7")
+        with pytest.raises(NetworkBlockedError):
+            socket.getaddrinfo("other.example.test", 443)
+        assert not guard.is_allowed("203.0.113.8")
+    finally:
+        guard.uninstall()

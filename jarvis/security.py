@@ -201,6 +201,8 @@ class NetworkGuard:
 
     def __init__(self, allowed_hosts: list[str]):
         self.allowed_hosts = {h.lower() for h in allowed_hosts}
+        # IP-адреса, в которые разрешились разрешённые имена (соединение идёт по IP).
+        self.resolved: set[str] = set()
         self._orig_connect = None
         self._orig_getaddrinfo = None
 
@@ -208,7 +210,7 @@ class NetworkGuard:
         if host is None:
             return False
         host = str(host).lower().strip("[]")
-        if host in self.allowed_hosts:
+        if host in self.allowed_hosts or host in self.resolved:
             return True
         try:
             return ipaddress.ip_address(host).is_loopback
@@ -240,7 +242,10 @@ class NetworkGuard:
         def getaddrinfo(host, *args, **kwargs):
             if host is not None and not guard.is_allowed(host):
                 raise NetworkBlockedError(f"Разрешение имени {host} запрещено")
-            return orig_getaddrinfo(host, *args, **kwargs)
+            infos = orig_getaddrinfo(host, *args, **kwargs)
+            if host is not None and str(host).lower() in guard.allowed_hosts:
+                guard.resolved.update(str(info[4][0]).split("%")[0] for info in infos)
+            return infos
 
         self._orig_connect = (orig_connect, orig_connect_ex)
         self._orig_getaddrinfo = orig_getaddrinfo

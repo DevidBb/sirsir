@@ -2,7 +2,8 @@
 
 Локальный голосовой ассистент на русском для **Windows 10/11** (целевая ОС — только Windows).
 Железо владельца: i5-10400F, RTX 3060 12 ГБ, 16 ГБ ОЗУ. Без платных облачных API, кроме
-необязательного провайдера Claude (Claude Agent SDK через вход в claude.ai).
+необязательных провайдеров Claude (Claude Agent SDK через вход в claude.ai) и Gemini
+(бесплатный ключ `GEMINI_API_KEY` в `.env`, клиент — `jarvis/gemini.py`).
 
 Что сделано и как пользоваться — `README.md`. Устройство кода — `docs/ARCHITECTURE.md`.
 Планы — `docs/ROADMAP.md`.
@@ -46,4 +47,6 @@ LLM, HUD или браузер рабочими, проверь их по-нас
 - Claude-провайдер — постоянный `ClaudeSDKClient` в своём asyncio-таске в потоке «claude-agent»
   (connect/use/close должны идти в одном таске).
 - Библиотека mcp 2.x отличается от 1.x по API — в `jarvis/mcp_client.py` используются фолбэки через getattr.
+- Gemini — HTTPS из процесса помощника: `NetworkGuard` пропускает его хост, только если задан ключ.
+  Gemini 3 требует вернуть `extra_content` (подпись мыслей) вместе с вызовом инструмента.
 - Headless-DuckDuckGo показывает капчу, поэтому браузер запускается с окном (headed).

@@ -95,6 +95,8 @@ def looks_like_tool_text(text: str) -> bool:
 
 
 class OllamaClient:
+    hint = "Проверьте, что Ollama запущена."
+
     def __init__(self, base_url: str, model: str, temperature: float = 0.4,
                  num_predict: int = 220, num_ctx: int = 4096,
                  timeout: float = 90, keep_alive: str = "5m"):
