@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -102,12 +103,18 @@ def resample(block: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
     return y.astype(dtype)
 
 
+def _bare_name(name: str) -> str:
+    """Имя без номера, который Windows добавляет после смены USB-порта: «Microphone (2- Logitech …)»."""
+    return re.sub(r"(^|\()\s*\d+-\s*", r"\1", name).lower()
+
+
 def resolve_device(sd, spec: str | int | None) -> int | None:
     """Находит индекс микрофона по сохранённому описанию «имя|интерфейс».
 
     В Windows одно устройство видно через MME, DirectSound и WASAPI под одним
     именем, а индексы меняются после перезагрузки — поэтому ищем по имени и
     интерфейсу, затем только по имени (предпочитая MME), иначе — по умолчанию.
+    Номер «2-» в имени не учитывается: Windows меняет его, если приёмник вставить в другой порт.
     """
     if spec in (None, ""):
         return None
@@ -122,8 +129,12 @@ def resolve_device(sd, spec: str | int | None) -> int | None:
     for i, d in inputs:
         if d["name"] == name and (not api or api_name(d) == api):
             return i
-    candidates = [(i, d) for i, d in inputs if name.lower() in d["name"].lower()
-                  or d["name"].lower() in name.lower()]
+    bare = _bare_name(name)
+    for i, d in inputs:
+        if _bare_name(d["name"]) == bare and (not api or api_name(d) == api):
+            return i
+    candidates = [(i, d) for i, d in inputs if bare in _bare_name(d["name"])
+                  or _bare_name(d["name"]) in bare]
     candidates.sort(key=lambda c: api_name(c[1]) != "MME")
     if candidates:
         return candidates[0][0]

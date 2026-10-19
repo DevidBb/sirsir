@@ -133,3 +133,21 @@ def test_resolve_device():
     # MME обрезает имя до 31 символа — находим по частичному совпадению, предпочитая MME
     assert resolve_device(FakeSD, "Микрофон (Realtek High Definition Audio)|DirectSound") == 4
     assert resolve_device(FakeSD, "Гарнитура|MME") is None
+
+
+def test_resolve_device_ignores_windows_port_number():
+    """После переноса приёмника в другой USB-порт Windows добавляет «2-» к имени."""
+    from jarvis.audio_input import resolve_device
+
+    class MovedSD(FakeSD):
+        @staticmethod
+        def query_devices():
+            return [{"name": "Microphone (2- Logitech PRO X Wireless Gaming Headset)",
+                     "max_input_channels": 1, "hostapi": 0},
+                    {"name": "Microphone (2- Logitech PRO X Wireless Gaming Headset)",
+                     "max_input_channels": 1, "hostapi": 1},
+                    {"name": "Microphone (Realtek Audio)", "max_input_channels": 2, "hostapi": 1}]
+    saved = "Microphone (Logitech PRO X Wireless Gaming Headset)|Windows WASAPI"
+    assert resolve_device(MovedSD, saved) == 1
+    assert resolve_device(MovedSD, "Microphone (3- Logitech PRO X Wireless Gaming Headset)|MME") == 0
+    assert resolve_device(MovedSD, "Microphone (Realtek Audio)|Windows WASAPI") == 2
