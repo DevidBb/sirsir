@@ -293,14 +293,34 @@ def test_build_like_in_the_video(tmp_path):
 
 
 def test_build_without_model_answer_uses_template(tmp_path):
-    studio, events, calls, opened, _ = make_studio(tmp_path, [RuntimeError("нет связи"), "не JSON"])
+    studio, events, calls, opened, prompts = make_studio(tmp_path, [RuntimeError("нет связи"), SPEC_ANSWER])
     out = studio.build(parse_site_request("сделай сайт для пекарни «Колос»"), lambda s: None, lambda: False)
     assert out.ok and calls == [(calls[0][0], False, True)]              # старого сайта нет — только проверка нового
+    assert len(prompts) == 1                                             # недоступную модель второй раз не ждём
     project = out.data["project"]
     assert project["steps"][0]["status"] == "skip"
     assert "шаблон" in project["steps"][1]["detail"]
+    assert "тексты пока по шаблону" in out.text                          # честно говорим, что модель не ответила
     page = (tmp_path / "sites" / "kolos" / "index.html").read_text(encoding="utf-8")
     assert "<h1" in page and "Колос" in page
+
+
+def test_build_retries_when_model_answers_not_json(tmp_path):
+    studio, events, calls, opened, prompts = make_studio(tmp_path, ["Конечно! Вот сайт.", SPEC_ANSWER])
+    out = studio.build(parse_site_request("сделай сайт для пекарни «Колос»"), lambda s: None, lambda: False)
+    assert len(prompts) == 2 and "только JSON" in prompts[1]
+    assert out.data["project"]["steps"][1]["detail"].startswith("Тестовая модель")
+    assert "по шаблону" not in out.text
+
+
+def test_build_says_when_site_not_found(tmp_path):
+    class NoSearch:
+        def search(self, query, limit=6):
+            return "duckduckgo", []
+    studio, *_ = make_studio(tmp_path, [SPEC_ANSWER], NoSearch())
+    said = []
+    out = studio.build(parse_site_request("сделай сайт для пекарни «Колос»"), said.append, lambda: False)
+    assert out.ok and "Официальный сайт не нашёл. Делаю с нуля." in said
 
 
 def test_build_asks_for_whom(tmp_path):
@@ -405,6 +425,10 @@ def test_write_structured_uses_local_model(config):
     request = a.llm.requests[0]
     assert request["options"]["num_predict"] >= 2000
     assert [m["role"] for m in request["messages"]] == ["system", "user"]
+    assert request["stream"] is True                        # потоком: таймаут между кусочками, не на весь ответ
+    a.llm.responses.append(text('{"brand": "Длинный ответ"}'))
+    a.emergency.trigger()
+    assert a.write_structured("система", "бриф")[0] == '{"bra'   # «стоп» прерывает генерацию
 
 
 def test_site_page_has_no_model_code(tmp_path):

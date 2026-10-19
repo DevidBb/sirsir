@@ -686,7 +686,9 @@ class Assistant:
             if text:
                 return text, "Claude"
             self.emit({"type": "notice", "text": "Claude не ответил — пишу тексты локальной моделью."})
-        kwargs: dict[str, Any] = {"options": {"num_predict": max_tokens, "temperature": 0.7}}
+        # Потоком: таймаут считается между кусочками, а не на весь длинный ответ; «стоп» прерывает генерацию.
+        kwargs: dict[str, Any] = {"options": {"num_predict": max_tokens, "temperature": 0.7},
+                                  "on_text": lambda piece: not self.emergency.active}
         if isinstance(self.llm, OllamaClient):
             kwargs["fmt"] = "json"  # режим JSON Ollama: маленькая модель не сбивается на рассуждения
         message = self.llm.chat([{"role": "system", "content": system_prompt},

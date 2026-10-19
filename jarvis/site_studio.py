@@ -603,6 +603,8 @@ class SiteStudio:
                 job.url = url
                 self._step(job, "find", "ok" if url else "skip",
                            host_of(url) if url else "Официальный сайт не нашёл — делаю с нуля")
+                if not url:
+                    say("Официальный сайт не нашёл. Делаю с нуля.")
                 check()
             before, analysis = None, None
             if url and self.browser is not None:
@@ -618,6 +620,7 @@ class SiteStudio:
                 except Exception as e:  # noqa: BLE001 — нет сайта или защита от роботов: делаем с нуля
                     log.warning("Разбор сайта %s: %s", url, e)
                     self._step(job, "analyze", "fail", f"Не открылся: {str(e).splitlines()[0][:120]}")
+                    say("Старый сайт не открылся. Делаю с нуля.")
             else:
                 self._step(job, "analyze", "skip", "Адреса текущего сайта нет — делаю с нуля")
             check()
@@ -654,7 +657,7 @@ class SiteStudio:
             job.proposals = proposals_for(spec)
             self._publish(job)
             audit_log.info("site_build %s -> %s (%d с, %s)", brand, index, seconds, model)
-            return Outcome(self._final(spec, before, after, seconds, req.deadline, shown),
+            return Outcome(self._final(spec, before, after, seconds, req.deadline, shown, model),
                            {"kind": "site", "project": job.snapshot()})
         except SiteCancelled:
             for step in job.steps:
@@ -793,10 +796,15 @@ class SiteStudio:
             prompt = request if attempt == 0 else request + "\n\nОтветь только JSON-объектом по схеме."
             try:
                 text, model = self.writer(system, prompt)
-                raw = extract_json(text)
-            except Exception as e:  # noqa: BLE001 — модель недоступна или ответила не JSON
+            except Exception as e:  # noqa: BLE001 — модель недоступна: второй раз ждать незачем
                 last_error = str(e).splitlines()[0][:160] if str(e) else type(e).__name__
-                log.warning("Студия сайтов: модель не дала описание (%s)", last_error)
+                log.warning("Студия сайтов: модель не ответила (%s)", last_error)
+                break
+            try:
+                raw = extract_json(text)
+            except ValueError as e:  # ответила не JSON — просим ещё раз строже
+                last_error = str(e).splitlines()[0][:160] if str(e) else "ответ не JSON"
+                log.warning("Студия сайтов: модель ответила не JSON (%s)", last_error)
                 continue
             return normalize_spec(raw, base, sources, images), model
         return base, f"шаблон (модель: {last_error or 'нет ответа'})" if fallback_ok else "—"
@@ -862,10 +870,12 @@ class SiteStudio:
                 "before_url": (before or {}).get("url", "")}
 
     def _final(self, spec: dict[str, Any], before: dict | None, after: dict | None, seconds: int,
-               deadline: str, shown: bool) -> str:
+               deadline: str, shown: bool, model: str = "") -> str:
         took = f"{seconds} {plural(seconds, ('секунду', 'секунды', 'секунд'))}"
         lines = [f"Готово, {self.address}. Сайт «{spec['brand']}» собран за {took}"
                  + (" и открыт в браузере." if shown else ".")]
+        if model.startswith("шаблон (модель"):
+            lines.append("Модель не ответила, поэтому тексты пока по шаблону.")
         if after:
             rows = site_audit.compare((before or {}).get("scores"), after["scores"])
             if before:
