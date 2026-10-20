@@ -190,8 +190,9 @@ class Outcome:
     ok: bool = True
 
 
-def _names(keys: list[str]) -> str:
-    names = [ACCUSATIVE[k] for k in keys]
+def names_of(keys: list[str], forms: dict[str, str] = ACCUSATIVE) -> str:
+    """«Claude, ChatGPT и локальную модель» (forms — падеж из ACCUSATIVE / NOMINATIVE / GENITIVE)."""
+    names = [forms[k] for k in keys]
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " и " + names[-1]
 
 
@@ -199,13 +200,15 @@ class Team:
     """members() — участники, доступные сейчас (проверка дешёвая: установлен, есть ключ)."""
 
     def __init__(self, members: Callable[[], list[Member]], emit: Callable[[dict], None] | None = None,
-                 name: str = "Джарвис", lead: str = "auto", timeout: float = 150, grace: float = 10):
+                 name: str = "Джарвис", lead: str = "auto", timeout: float = 150, grace: float = 10,
+                 patience: float | None = 60):
         self.members = members
         self.emit = emit or (lambda event: None)
         self.name = name
         self.lead = lead
         self.timeout = timeout
         self.grace = grace  # участники сами следят за timeout; команда ждёт ещё немного на всякий случай
+        self.patience = patience  # первый ответил — остальных ждём ещё столько, отставших останавливаем
         self.on_close: list[Callable[[], None]] = []
 
     def close(self) -> None:
@@ -217,6 +220,69 @@ class Team:
 
     def _publish(self, job: TeamJob) -> None:
         self.emit({"type": "team", "job": job.snapshot()})
+
+    def ask_all(self, members: list[Member], system: str, prompt: str, cancelled: Callable[[], bool],
+                on_change: Callable[[list[Answer]], None] = lambda answers: None,
+                patience: float | None = None) -> list[Answer] | None:
+        """Один запрос всем участникам параллельно → ответы по порядку участников; None — остановлено.
+        on_change — после старта и после каждого ответа (для HUD). patience — сколько ещё ждать остальных
+        после первого ответа; не дождались — участника останавливаем (Codex — процесс, Ollama — поток)."""
+        answers = [Answer(m.key, m.title, status="run") for m in members]
+        results: queue.Queue[tuple[int, str, str, float]] = queue.Queue()
+        give_up = threading.Event()  # команда больше не ждёт: отставшие прекращают работу
+
+        def work(i: int, member: Member) -> None:
+            t0 = time.monotonic()
+            try:
+                text = member.ask(system, prompt, lambda: cancelled() or give_up.is_set())
+                results.put((i, "ok" if text else "fail", text or "Пустой ответ", time.monotonic() - t0))
+            except Exception as e:  # noqa: BLE001 — один участник не должен ронять команду
+                log.warning("Команда ИИ: %s не ответил: %s", member.title, e)
+                note = str(e).splitlines()[0][:200] if str(e) else type(e).__name__
+                results.put((i, "fail", note, time.monotonic() - t0))
+
+        for i, member in enumerate(members):
+            self.emit({"type": "tool_start", "name": f"team_{member.key}", "args": {}})
+            threading.Thread(target=work, args=(i, member), daemon=True, name=f"team-{member.key}").start()
+        on_change(answers)
+
+        waiting = set(range(len(members)))
+        started = time.monotonic()
+        deadline = started + self.timeout + self.grace
+        patience_until = float("inf")  # до первого ответа ждём до deadline
+        while waiting:
+            if cancelled():
+                give_up.set()
+                for a in answers:
+                    if a.status == "run":
+                        a.status = "skip"
+                return None
+            try:
+                i, status, text, seconds = results.get(timeout=0.2)
+            except queue.Empty:
+                now = time.monotonic()
+                if now > deadline:
+                    note = f"не ответил за {self.timeout:.0f} с"
+                elif now > patience_until:
+                    note = f"не успел: ждали {now - started:.0f} с"
+                else:
+                    continue
+                give_up.set()
+                for i in sorted(waiting):
+                    a = answers[i]
+                    a.status, a.text, a.seconds = "fail", note, now - started
+                    self.emit({"type": "tool_end", "name": f"team_{a.key}", "ok": False, "text": a.text})
+                on_change(answers)
+                break
+            waiting.discard(i)
+            a = answers[i]
+            a.status, a.text, a.seconds = status, text, seconds
+            if status == "ok" and patience is not None and not any(x.status == "ok" for x in answers if x is not a):
+                patience_until = time.monotonic() + patience  # первый ответ: остальных ждём ещё patience
+            self.emit({"type": "tool_end", "name": f"team_{a.key}", "ok": status == "ok",
+                       "text": f"{seconds:.0f} с" if status == "ok" else text})
+            on_change(answers)
+        return answers
 
     def _lead_order(self, answered: list[str]) -> list[str]:
         order = [k for k in ORDER if k in answered]
@@ -235,51 +301,17 @@ class Team:
                       answers=[Answer(m.key, m.title) for m in members])
         by_key = {m.key: m for m in members}
         self._publish(job)
-        say(f"Спрашиваю команду: {_names([m.key for m in members])}." if len(members) > 1
+        say(f"Спрашиваю команду: {names_of([m.key for m in members])}." if len(members) > 1
             else f"Сейчас в команде только {NOMINATIVE[members[0].key]}. Спрашиваю.")
         audit_log.info("team_ask %s -> %s", question[:120], ",".join(by_key))
 
-        results: queue.Queue[tuple[str, str, str, float]] = queue.Queue()
-        system = MEMBER_SYSTEM.format(name=self.name)
-
-        def work(member: Member) -> None:
-            t0 = time.monotonic()
-            try:
-                text = member.ask(system, question, cancelled)
-                results.put((member.key, "ok" if text else "fail", text or "Пустой ответ", time.monotonic() - t0))
-            except Exception as e:  # noqa: BLE001 — один участник не должен ронять команду
-                log.warning("Команда ИИ: %s не ответил: %s", member.title, e)
-                note = str(e).splitlines()[0][:200] if str(e) else type(e).__name__
-                results.put((member.key, "fail", note, time.monotonic() - t0))
-
-        for answer in job.answers:
-            answer.status = "run"
-            self.emit({"type": "tool_start", "name": f"team_{answer.key}", "args": {}})
-            threading.Thread(target=work, args=(by_key[answer.key],), daemon=True, name=f"team-{answer.key}").start()
-        self._publish(job)
-
-        waiting = {a.key for a in job.answers}
-        deadline = time.monotonic() + self.timeout + self.grace
-        while waiting:
-            if cancelled():
-                return self._stop(job)
-            try:
-                key, status, text, seconds = results.get(timeout=0.2)
-            except queue.Empty:
-                if time.monotonic() > deadline:
-                    for a in job.answers:
-                        if a.key in waiting:
-                            a.status, a.text = "fail", f"не ответил за {self.timeout:.0f} с"
-                            self.emit({"type": "tool_end", "name": f"team_{a.key}", "ok": False, "text": a.text})
-                    break
-                continue
-            waiting.discard(key)
-            answer = next(a for a in job.answers if a.key == key)
-            answer.status, answer.text, answer.seconds = status, text, seconds
-            self.emit({"type": "tool_end", "name": f"team_{key}", "ok": status == "ok",
-                       "text": f"{seconds:.0f} с" if status == "ok" else text})
+        def changed(answers: list[Answer]) -> None:
+            job.answers = answers
             self._publish(job)
 
+        if self.ask_all(members, MEMBER_SYSTEM.format(name=self.name), question, cancelled, changed,
+                        patience=self.patience) is None:
+            return self._stop(job)
         answered = [a for a in job.answers if a.status == "ok"]
         if not answered:
             job.seconds = time.monotonic() - started
@@ -387,6 +419,7 @@ def _own_claude(config: Any, team: Team) -> Any:
 def setup(config: Any, assistant: Any) -> Team:
     team = Team(lambda: [], emit=assistant.emit, name=str(config.get("assistant.name", "Джарвис")),
                 lead=str(config.get("team.lead", "auto") or "auto").lower(),
-                timeout=float(config.get("team.timeout_seconds", 150)))
+                timeout=float(config.get("team.timeout_seconds", 150)),
+                patience=float(config.get("team.patience_seconds", 60)))
     team.members = lambda: build_members(config, assistant, team)
     return team

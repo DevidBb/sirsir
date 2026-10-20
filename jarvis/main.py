@@ -114,6 +114,7 @@ class App:
         # параллельно, ведущий сводит ответы в один итог.
         self.team = team.setup(config, self.assistant)
         self.assistant.team = self.team
+        self.sites.team = self.team  # «сделай сайт … командой»: тексты проверяют остальные ИИ
 
     def _setup_browser(self) -> None:
         """Браузер Джарвиса (Playwright). Без Playwright помощник работает как раньше."""

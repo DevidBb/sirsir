@@ -376,6 +376,7 @@ code { font: 13px var(--code); }
 .team-final { margin-top: 12px; padding: 10px 12px; border: 1px solid rgba(var(--signal-rgb), .5); border-radius: 9px; }
 .team-final .body { margin-top: 4px; overflow-wrap: anywhere; }
 .site-result { margin-top: 12px; }
+.site-team { margin: 0 0 12px; }
 .site-meta { margin: 0 0 8px; font: 13.5px var(--display); color: var(--ash); }
 .site-shots { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; }
 .site-shot { display: block; max-width: 100%; border-radius: 8px; border: 1px solid var(--seam-2); }

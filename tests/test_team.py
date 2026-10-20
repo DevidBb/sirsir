@@ -119,8 +119,8 @@ def test_stop_and_timeout():
     started = time.monotonic()
     outcome, _, _ = run_team([member("claude", "долго", delay=5), member("local", "быстро")], timeout=0.2, grace=0)
     assert outcome.text == "Ответ есть только от локальной модели. быстро" and time.monotonic() - started < 2
-    assert outcome.data["job"]["answers"][0] == {"key": "claude", "title": "Claude", "status": "fail",
-                                                 "text": "не ответил за 0 с", "seconds": 0.0}
+    late = outcome.data["job"]["answers"][0]
+    assert (late["status"], late["text"]) == ("fail", "не ответил за 0 с") and 0.1 < late["seconds"] < 1.5
 
 
 def test_explicit_lead():
@@ -234,3 +234,21 @@ def test_check_team_lists_found_and_missing(config, monkeypatch):
     config.set("team.members", ["local"])
     result = checks.check_team(config)[0]
     assert not result.ok and result.detail == "локальная модель"  # одному не с кем сверяться
+
+
+def test_patience_stops_laggards():
+    stopped = threading.Event()
+
+    def slow(system, prompt, is_stopped):
+        for _ in range(100):  # как поток Ollama: проверяет «стоп» между кусочками
+            if is_stopped():
+                stopped.set()
+                raise LLMError("остановлено")
+            time.sleep(0.05)
+        return "поздно"
+    started = time.monotonic()
+    outcome, _, _ = run_team([member("claude", "быстро"), Member("local", "Локальная", slow)], patience=0.3)
+    assert time.monotonic() - started < 2 and outcome.text == "Ответ есть только от Claude. быстро"
+    late = outcome.data["job"]["answers"][1]
+    assert late["status"] == "fail" and late["text"].startswith("не успел")
+    assert stopped.wait(2)  # отставший перестал работать, а не висит в фоне

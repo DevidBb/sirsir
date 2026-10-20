@@ -21,7 +21,7 @@
     search_files: "Ищу файлы", delete_file: "Удаляю в корзину", list_windows: "Окна", close_window: "Закрываю окно", lock_screen: "Блокирую экран",
     schedule_task: "Планирую задачу", list_schedules: "Плановые задачи", cancel_schedule: "Отменяю плановую задачу", use_skill: "Навык",
     shutdown_computer: "Выключение", restart_computer: "Перезагрузка", sleep_computer: "Сон", cancel_shutdown: "Отмена выключения",
-    site_find: "Ищу текущий сайт", site_analyze: "Разбираю текущий сайт", site_design: "Стиль и тексты",
+    site_find: "Ищу текущий сайт", site_analyze: "Разбираю текущий сайт", site_design: "Стиль и тексты", site_review: "Команда проверяет тексты", site_polish: "Правки по замечаниям",
     site_layout: "Вёрстка", site_check: "Проверка качества", site_show: "Показываю сайт", site_edit: "Правка сайта",
     site_open: "Открываю сайт", site_folder: "Папка сайта",
     team_claude: "Спрашиваю Claude", team_codex: "Спрашиваю ChatGPT", team_gemini: "Спрашиваю Gemini",
@@ -317,6 +317,19 @@
     const meta = [r.seconds != null ? `за ${r.seconds} с` : "", r.model, r.style ? `стиль «${r.style}»` : "",
       r.background === "dark" ? "тёмная тема" : ""].filter(Boolean).join(" · ");
     if (meta) box.appendChild(el("p", "site-meta", meta));
+    if ((r.team || []).length) {  // «… командой»: что заметил каждый ИИ команды
+      const team = el("div", "site-team");
+      team.appendChild(el("p", "scores-head", "Замечания команды"));
+      r.team.forEach(n => {
+        const more = el("details", "job-answer");
+        more.appendChild(el("summary", "", n.status === "ok" ? `${n.title} · ${Math.round(n.seconds)} с` : `${n.title} · не ответил`));
+        const body = el("div", "body");
+        if (n.status === "ok") body.innerHTML = md.render(n.text); else body.textContent = n.text;
+        more.appendChild(body);
+        team.appendChild(more);
+      });
+      box.appendChild(team);
+    }
     if (r.shots) {
       const shots = el("div", "site-shots");
       shots.append(shot(r.shots.desktop, "Новый сайт на компьютере", "site-shot desk"),

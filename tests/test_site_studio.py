@@ -469,3 +469,99 @@ def test_site_page_has_no_model_code(tmp_path):
     page = (studio.last() / "index.html").read_text(encoding="utf-8")
     assert "onerror=alert" not in page and "<script>alert" not in page
     assert len(re.findall(r"<script", page)) <= 3  # класс js, данные корзины, код страницы
+
+
+# --- сайт командой ИИ ------------------------------------------------------------------------
+@pytest.mark.parametrize("phrase, target, team", [
+    ("сделай сайт для кофейни Зерно командой", "кофейни Зерно", True),
+    ("Джарвис, командой сделай новый сайт для барбершопа Бритва", "барбершопа Бритва", True),
+    ("сделай новый сайт для More Nutrition всей командой ИИ за три часа", "More Nutrition", True),
+    ("сделай сайт для пекарни Колос всеми нейросетями", "пекарни Колос", True),
+    ("сделай сайт для кофейни Зерно", "кофейни Зерно", False),
+    ("сделай сайт для клуба «Командор»", "клуба «Командор»", False),
+])
+def test_site_phrases_with_team(phrase, target, team):
+    req = parse_site_request(phrase)
+    assert req.target == target and req.team is team
+
+
+def team_of(*members):
+    from jarvis.team import Team
+    return Team(lambda: list(members), grace=0, timeout=5)
+
+
+def reviewer(key, answer, asked=None):
+    from jarvis.team import TITLES, Member
+
+    def ask(system, prompt, stopped):
+        if asked is not None:
+            asked.append((key, system, prompt))
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+    return Member(key, TITLES[key], ask)
+
+
+IMPROVED_ANSWER = SPEC_ANSWER.replace("Больше от каждого дня", "Белок без сахара")
+
+
+def test_build_with_team_review(tmp_path):
+    asked = []
+    studio, events, calls, opened, prompts = make_studio(tmp_path, [SPEC_ANSWER, IMPROVED_ANSWER])
+    studio.team = team_of(reviewer("codex", "hero.title — штамп — «Белок без сахара»", asked),
+                          reviewer("local", "Замечаний нет.", asked), reviewer("gemini", RuntimeError("429"), asked))
+    said = []
+    out = studio.build(parse_site_request("сделай сайт для More Nutrition командой"), said.append, lambda: False)
+    assert out.ok
+    steps = {s["key"]: s for s in out.data["project"]["steps"]}
+    assert [s["key"] for s in out.data["project"]["steps"]] == [
+        "analyze", "design", "review", "polish", "layout", "check", "show"]
+    assert steps["review"]["status"] == "ok" and "ChatGPT (Codex): замечаний: 1" in steps["review"]["detail"]
+    assert "Gemini: не ответил" in steps["review"]["detail"] and "замечаний нет" in steps["review"]["detail"]
+    assert steps["polish"]["status"] == "ok"
+    assert sorted(k for k, _, _ in asked) == ["codex", "gemini", "local"]           # все проверяли параллельно
+    assert "Total Protein" in asked[0][2] and "Больше от каждого дня" in asked[0][2]  # видели данные и тексты
+    assert "«Белок без сахара»" in prompts[1] and "Замечаний нет" not in prompts[1]  # автору — только замечания
+    page = (tmp_path / "sites" / "more-nutrition" / "index.html").read_text(encoding="utf-8")
+    assert ">Белок</span>" in page and ">Больше</span>" not in page
+    notes = out.data["project"]["result"]["team"]
+    assert [(n["key"], n["status"]) for n in notes] == [("codex", "ok"), ("local", "ok"), ("gemini", "fail")]
+    assert "Тексты готовы. Проверяет команда: ChatGPT, локальная модель и Gemini." in said
+    assert "Тексты проверили ChatGPT и локальная модель." in out.text
+
+
+def test_team_review_skips_writer_and_keeps_text_when_no_notes(tmp_path):
+    asked = []
+    studio, events, calls, opened, prompts = make_studio(tmp_path, [SPEC_ANSWER])
+    original = studio.writer
+    studio.writer = lambda system, user: (original(system, user)[0], "Claude")
+    studio.team = team_of(reviewer("claude", "Я автор.", asked), reviewer("codex", "Замечаний нет", asked))
+    out = studio.build(parse_site_request("командой сделай сайт для More Nutrition"), lambda s: None, lambda: False)
+    steps = {s["key"]: s for s in out.data["project"]["steps"]}
+    assert [k for k, _, _ in asked] == ["codex"]                       # автор текстов себя не проверяет
+    assert steps["polish"]["status"] == "skip" and steps["polish"]["detail"] == "Замечаний нет"
+    assert len(prompts) == 1                                            # автору второй раз писать не пришлось
+
+
+def test_team_review_keeps_first_version_when_writer_fails(tmp_path):
+    studio, events, calls, opened, prompts = make_studio(tmp_path, [SPEC_ANSWER, RuntimeError("нет связи")])
+    studio.team = team_of(reviewer("codex", "hero.title — слабо — «Белок без сахара»"))
+    out = studio.build(parse_site_request("сделай сайт для More Nutrition командой"), lambda s: None, lambda: False)
+    steps = {s["key"]: s for s in out.data["project"]["steps"]}
+    assert out.ok and steps["polish"]["status"] == "fail"
+    page = (tmp_path / "sites" / "more-nutrition" / "index.html").read_text(encoding="utf-8")
+    assert ">Больше</span>" in page and ">Белок</span>" not in page
+
+
+def test_team_site_phrase_goes_to_studio_not_council(config):
+    from jarvis.team import Outcome as TeamOutcome
+
+    class Council:
+        def run(self, question, say, cancelled):
+            return TeamOutcome("совет")
+    studio = FakeStudio()
+    a = assistant_with(config, studio)
+    a.team = Council()
+    assert a.handle("Джарвис, командой сделай сайт для кофейни Зерно").text == "Готово, сэр."
+    assert studio.built[0].team and studio.built[0].target == "кофейни Зерно"
+    assert a.handle("командой: как назвать кофейню").text == "совет"
