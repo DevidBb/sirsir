@@ -101,6 +101,8 @@ DIRECTION_HINTS = (
     ("playful", r"дет|игруш|зоо|питом|кондитер|торт|сладост|мороже|праздник|аниматор|школ|кружок"),
     ("bold", r"спорт|фитнес|протеин|питани|бургер|пицц|еда|доставк|барбершоп|авто|тату|энерг|клуб|зал"),
 )
+# Адрес сайта в поле «адрес» — это не почтовый адрес (модель путала их).
+WEB_ADDRESS_RE = re.compile(r"https?:|www\.|\b[\w-]+\.(?:ru|рф|com|de|net|org|io|shop|online|by|kz|ua|eu)\b", re.I)
 SKIP_HOSTS = ("wikipedia.", "youtube.", "vk.com", "instagram.", "facebook.", "2gis.", "yandex.", "google.",
               "avito.", "ozon.", "wildberries.", "hh.ru", "tiktok.", "amazon.", "ebay.", "otzovik.",
               "irecommend.", "zoon.", "flamp.", "t.me", "telegram.", "ok.ru", "dzen.ru", "rutube.", "twitter.", "x.com")
@@ -390,12 +392,30 @@ def base_spec(req: SiteRequest, analysis: dict[str, Any] | None) -> dict[str, An
     }
 
 
+def _image_key(url: str) -> str:
+    """Адрес картинки без протокола и параметров: «//cdn/logo.png?width=97» и «https://cdn/logo.png» — одно и то же."""
+    return re.sub(r"^https?:", "", (url or "").split("#")[0].split("?")[0]).lower()
+
+
+def _logo_like(url: str, logo: str) -> bool:
+    """Логотип или графика: «logo» в имени файла, тот же файл, что логотип, или SVG (фото в SVG не бывает)."""
+    name = _image_key(url).rsplit("/", 1)[-1]
+    return "logo" in name or name.endswith(".svg") or bool(logo) and _image_key(url) == _image_key(logo)
+
+
 def hero_image(analysis: dict[str, Any] | None) -> str:
+    """og:image, если это не логотип; иначе самая крупная на экране картинка в начале страницы."""
     a = analysis or {}
+    logo = a.get("logo") or ""
     og = a.get("ogImage") or ""
-    if re.match(r"^https?://", og):
+    if re.match(r"^https?://", og) and not _logo_like(og, logo):
         return og
-    images = sorted(_l(a.get("images")), key=lambda im: -(int(im.get("w") or 0) * int(im.get("h") or 0)))
+
+    def area(im: dict[str, Any]) -> float:
+        shown = int(im.get("rw") or 0) * int(im.get("rh") or 0)
+        size = shown or int(im.get("w") or 0) * int(im.get("h") or 0)  # старые разборы без размеров на экране
+        return size / 4 if int(im.get("top") or 0) > 1600 else size
+    images = sorted((im for im in _l(a.get("images")) if not _logo_like(im.get("src", ""), logo)), key=lambda im: -area(im))
     return images[0]["src"] if images else ""
 
 
@@ -425,6 +445,8 @@ def normalize_spec(raw: dict[str, Any], base: dict[str, Any], sources: str,
         return out[:most]
 
     hero, base_hero = _d(raw.get("hero")), _d(base.get("hero"))
+    # Бегущая строка — короткие слова: обрезанное «…» не берём; меньше трёх — по шаблону.
+    ticker = [t for t in (text(x, 28) for x in _l(raw.get("ticker"))) if t and not t.endswith("…")][:8]
     spec: dict[str, Any] = {
         "brand": _s(raw.get("brand"), 60) or base.get("brand", ""),
         "lang": re.sub(r"[^a-z-]", "", str(raw.get("lang") or base.get("lang") or "ru").lower())[:5] or "ru",
@@ -432,7 +454,7 @@ def normalize_spec(raw: dict[str, Any], base: dict[str, Any], sources: str,
         "description": text(raw.get("description"), 200) or base.get("description", ""),
         "hero": {k: text(hero.get(k), lim) or base_hero.get(k, "") for k, lim in
                  (("kicker", 50), ("title", 90), ("subtitle", 260), ("cta", 32), ("cta2", 32))},
-        "ticker": [t for t in (text(x, 28) for x in _l(raw.get("ticker"))) if t][:8] or base.get("ticker", []),
+        "ticker": ticker if len(ticker) >= 3 else base.get("ticker", []),
         "products_title": text(raw.get("products_title"), 50) or base.get("products_title", ""),
         "products_text": text(raw.get("products_text"), 200),
         "highlight": {"title": text(_d(raw.get("highlight")).get("title"), 110),
@@ -471,7 +493,7 @@ def normalize_spec(raw: dict[str, Any], base: dict[str, Any], sources: str,
         "phone": phone if len(re.sub(r"\D", "", phone)) >= 7 and _grounded(phone, sources) else base_contacts.get("phone", ""),
         "email": email if email and email.lower() in low_sources and "@" in email else base_contacts.get("email", ""),
         "address": address if address_words and sum(w in low_sources for w in address_words) >= len(address_words) * 0.6
-        and _grounded(address, sources) else base_contacts.get("address", ""),
+        and _grounded(address, sources) and not WEB_ADDRESS_RE.search(address) else base_contacts.get("address", ""),
         "hours": hours if hours and _grounded(hours, sources) and re.search(r"\d", hours) else base_contacts.get("hours", ""),
     }
     style, base_style = _d(raw.get("style")), _d(base.get("style"))
@@ -763,7 +785,7 @@ class SiteStudio:
     def _analysis_note(analysis: dict[str, Any], colors: tuple[str | None, str | None]) -> str:
         bits = []
         if analysis.get("products"):
-            bits.append(f"товаров с ценами: {len(analysis['products'])}")
+            bits.append(f"товаров: {len(analysis['products'])}")
         if analysis.get("heads"):
             bits.append(f"разделов: {len(analysis['heads'])}")
         if colors[0]:

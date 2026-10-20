@@ -1,0 +1,57 @@
+<!doctype html>
+<!-- Магазин как на WooCommerce: цена со скидкой в <del>/<ins>, логотип — SVG в коде страницы (адрес есть
+     только в JSON-LD), ещё один товар — только в JSON-LD, последний ряд проявляется при прокрутке. -->
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Обжарка «Зерно» — кофе свежей обжарки</title>
+<style>
+  body { margin: 0; font-family: sans-serif; }
+  ul.products { display: flex; gap: 24px; list-style: none; padding: 0; }
+  ul.products img { width: 220px; height: 220px; }
+  .reveal { opacity: 0; transition: opacity .2s; }
+  .reveal.visible { opacity: 1; }
+</style>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@graph": [
+  {"@type": "Organization", "name": "Зерно", "logo": {"@type": "ImageObject", "url": "/img/zerno-logo.png"}},
+  {"@type": "ItemList", "itemListElement": [{"@type": "ListItem", "position": 1, "item": {
+    "@type": "Product", "name": "Колумбия Супремо", "image": ["/img/c1.png"],
+    "offers": {"@type": "Offer", "price": "890", "priceCurrency": "RUB"}}}]}
+]}
+</script>
+<script type="application/ld+json">{ это не JSON </script>
+</head>
+<body>
+<header><a href="/" class="site-logo"><svg width="120" height="40"><text x="0" y="30">Зерно</text></svg></a></header>
+<main>
+  <h1>Кофе свежей обжарки</h1>
+  <ul class="products columns-3">
+    <li class="product"><a href="/product/efiopiya-sidamo/" class="woocommerce-LoopProduct-link">
+      <img src="/img/c2.png" width="300" height="300" alt="Эфиопия Сидамо">
+      <h2 class="woocommerce-loop-product__title">Эфиопия Сидамо</h2>
+      <span class="price"><del><span class="amount">1 190&nbsp;₽</span></del> <ins><span class="amount">990&nbsp;₽</span></ins></span></a>
+      <a href="?add-to-cart=12" class="button">В корзину</a></li>
+    <li class="product"><a href="/product/kenia-aa/" class="woocommerce-LoopProduct-link">
+      <img src="/img/c3.png" width="300" height="300" alt="Кения АА">
+      <h2 class="woocommerce-loop-product__title">Кения АА</h2>
+      <span class="price"><span class="amount">1 350&nbsp;₽</span></span></a>
+      <a href="?add-to-cart=13" class="button">В корзину</a></li>
+  </ul>
+  <div style="height: 1600px"></div>
+  <section class="reveal"><ul class="products">
+    <li class="product"><a href="/product/brazil-santos/" class="woocommerce-LoopProduct-link">
+      <img src="/img/c4.png" width="300" height="300" alt="Бразилия Сантос">
+      <h2 class="woocommerce-loop-product__title">Бразилия Сантос</h2>
+      <span class="price"><span class="amount">750&nbsp;₽</span></span></a></li>
+  </ul></section>
+</main>
+<script>
+  const io = new IntersectionObserver((entries) => entries.forEach((e) => {
+    if (e.isIntersecting) { e.target.classList.add('visible'); io.unobserve(e.target); }
+  }));
+  document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
+</script>
+</body>
+</html>

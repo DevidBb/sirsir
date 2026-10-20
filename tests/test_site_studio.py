@@ -8,7 +8,7 @@ from jarvis import site_audit
 from jarvis.assistant import Assistant
 from jarvis.memory import Memory
 from jarvis.site_render import contrast, palette, parse_price, render
-from jarvis.site_studio import (SiteStudio, base_spec, extract_json, guess_direction, match_site,
+from jarvis.site_studio import (SiteStudio, base_spec, extract_json, guess_direction, hero_image, match_site,
                                 normalize_spec, parse_revision, parse_site_request, quick_edit,
                                 spoken_domain)
 from jarvis.tool_registry import ToolRegistry
@@ -115,6 +115,34 @@ def test_normalize_drops_invented_facts():
     assert spec["style"] == {"direction": "bold", "primary": "#e3001b", "accent": "#ffb3c1", "background": "dark"}
     assert spec["faq"] == [{"q": "С какого года вы работаете?", "a": ""}, {"q": "Есть доставка?", "a": "Да."}]
     assert spec["images"] == {"hero": "https://more.de/hero.jpg"}
+
+
+def test_normalize_drops_site_url_from_address_and_cut_ticker():
+    sources = "Сайт: https://morenutrition.de/\nТекст: More Nutrition, Berlin, Kastanienallee 12, morenutrition.de"
+    base = {"ticker": ["Aktion", "Proben"], "contacts": {}}
+    raw = {"contacts": {"address": "morenutrition.de"},
+           "ticker": ["Protein", "Snacks", "Очень длинная фраза для бегущей строки, которая не влезет", "Sirup"]}
+    spec = normalize_spec(raw, base, sources)
+    assert spec["contacts"]["address"] == ""                       # адрес сайта — не почтовый адрес
+    assert spec["ticker"] == ["Protein", "Snacks", "Sirup"]         # обрезанное «…» не берём
+    spec = normalize_spec({"contacts": {"address": "Berlin, Kastanienallee 12"}, "ticker": ["Protein", "Очень длинная фраза "
+                           "для бегущей строки, которая не влезет", "Sirup"]}, base, sources)
+    assert spec["contacts"]["address"] == "Berlin, Kastanienallee 12"
+    assert spec["ticker"] == ["Aktion", "Proben"]                   # меньше трёх слов — по шаблону
+
+
+def test_hero_image_is_not_logo():
+    logo = "https://shop.de/cdn/brand-mark.png?width=97"
+    analysis = {"logo": logo, "ogImage": "http://shop.de/cdn/More_Logo_Suite_Black.png?v=1", "images": [
+        {"src": "https://shop.de/cdn/pudding.png", "w": 4096, "h": 4096, "rw": 330, "rh": 330, "top": 900},
+        {"src": "https://shop.de/cdn/banner.png", "w": 900, "h": 475, "rw": 1366, "rh": 720, "top": 120},
+        {"src": "http://shop.de/cdn/brand-mark.png?width=600", "w": 600, "h": 200, "rw": 1366, "rh": 900, "top": 0},
+        {"src": "https://shop.de/cdn/footer-team.png", "w": 1600, "h": 900, "rw": 1366, "rh": 768, "top": 4200}]}
+    assert hero_image(analysis) == "https://shop.de/cdn/banner.png"  # не логотип, не товар 4096×4096, не подвал
+    assert hero_image({**analysis, "ogImage": "https://shop.de/og.jpg"}) == "https://shop.de/og.jpg"
+    old = {"ogImage": "https://cafe.ru/brand.svg", "images": [{"src": "https://cafe.ru/a.jpg", "w": 800, "h": 600}]}
+    assert hero_image(old) == "https://cafe.ru/a.jpg"                # SVG — графика, а не фото
+    assert site_audit.business_notes({"url": "https://cafe.ru/", "title": "Кафе"}).startswith("Сайт: https://cafe.ru/")
 
 
 def test_normalize_strips_markup_and_limits():

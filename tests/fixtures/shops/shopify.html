@@ -1,0 +1,105 @@
+<!doctype html>
+<!-- Как главная магазина на Shopify (тема Dawn): бегущая строка с «бесплатной доставкой», шторка меню
+     с баннером и «0,00 €», окно поиска, карточки с перечёркнутой ценой, ценой за кг и подписью «Normaler Preis». -->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Testshop Nutrition: lecker Kalorien sparen</title>
+<meta name="description" content="Protein, Snacks und Sirup ohne Zucker.">
+<meta property="og:site_name" content="Testshop">
+<meta property="og:image" content="/img/Testshop_Logo_Social.png">
+<style>
+  body { margin: 0; font-family: sans-serif; }
+  .visually-hidden { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .menu-drawer { display: none; }
+  .search-modal { position: fixed; top: 60px; right: 0; width: 240px; opacity: 0; pointer-events: none; }
+  .price--on-sale .price__regular, .price:not(.price--on-sale) .price__sale { display: none; }
+  .strike-through-price { text-decoration: line-through; }
+  .hero img { width: 100%; height: auto; display: block; }
+  .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; list-style: none; padding: 0; }
+  .grid img { width: 100%; height: auto; }
+  .tab-hidden { display: none; }
+  .review img { width: 120px; height: 120px; }
+</style>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "Organization", "name": "Testshop", "logo": "/img/ld-logo.png"}
+</script>
+</head>
+<body>
+<div class="announcement-bar-section">
+  <div class="utility-bar"><p class="announcement-bar__message">
+    <img src="/img/truck.png" width="20" height="20" alt=""> <span>Kostenloser Versand ab 55,00 €</span></p></div>
+</div>
+<div id="shopify-section-header" class="section-header">
+  <header class="header">
+    <details class="menu-drawer-container"><summary>Menü</summary>
+      <div class="menu-drawer">
+        <a href="/collections/neu"><img src="/img/Fast_Alles_Banner_750x300.png" width="750" height="300" alt=""></a>
+        <ul>
+          <li><a href="/products/zerup">Zerup - Zero Sirup <span>0,00 €</span></a></li>
+          <li><a href="/products/iced-coffee"><img src="/img/p1.png" width="100" height="100" alt="Iced Coffee">Protein Iced Coffee</a>
+            <span class="price">0,00 €</span></li>
+        </ul>
+        <a href="/pages/freunde">Freunde werben &amp; 15€ sichern</a>
+      </div>
+    </details>
+    <a href="/" class="header__heading-link"><img src="/img/logo.png" alt="Testshop" width="97" height="33" class="header__heading-logo"></a>
+    <nav><a href="/collections/aktion">Aktion</a> <a href="/collections/proben">Proben</a> <a href="/pages/about">Über uns</a></nav>
+  </header>
+</div>
+<div class="search-modal"><div class="predictive-search">
+  <a href="/products/zerup" class="predictive-search__item"><img src="/img/p2.png" width="74" height="74" alt=""><p>Zerup - Zero Sirup</p><span>0,00 €</span></a>
+</div></div>
+
+<main id="MainContent">
+  <section class="hero"><img src="/img/hero.png" width="1600" height="700" alt="Neue Sorten"><h1>Lecker Kalorien sparen</h1></section>
+  <h2>Bestseller</h2>
+  <ul class="grid">
+    <li class="grid__item"><div class="card-wrapper product-card-wrapper"><div class="card">
+      <div class="card__media"><img src="/img/p1.png" alt="More_Protein_Pudding_60g_4096x4096.png" width="600" height="600"></div>
+      <div class="card__content"><div class="card__information">
+        <div class="card__title-block"><span class="chip">Baked Apple</span> <span>+1</span>
+          <h3 class="card__heading"><a href="/products/protein-griesspudding?variant=1">Protein Grießpudding</a></h3>
+          <p class="product-subtitle">Fertig-Mix für Grießpudding</p></div>
+        <div class="rating"><span aria-hidden="true">4.4</span></div>
+        <div class="price"><div class="price__container">
+          <span class="strike-through-price">0,00 €</span>
+          <div class="price__sale"><span class="visually-hidden">Normaler Preis</span><s class="price-item"></s>
+            <span class="visually-hidden">Verkaufspreis</span><span class="price-item price-item--sale"></span></div>
+          <div class="price__regular"><span class="visually-hidden">Normaler Preis</span>
+            <span class="price-item price-item--regular">2,99 €</span></div>
+          <small class="unit-price"><span class="visually-hidden">Grundpreis</span><span>49,83 €</span>
+            <span aria-hidden="true">/</span><span class="visually-hidden">&nbsp;pro&nbsp;</span><span>kg</span></small>
+        </div></div>
+      </div></div>
+    </div></div></li>
+    <li class="grid__item"><div class="card">
+      <div class="card__media"><a href="/products/clear-whey"><img src="/img/p2.png" alt="" width="600" height="600"></a></div>
+      <h3><a href="/products/clear-whey">Clear Whey Isolate</a></h3>
+      <div class="price price--on-sale">
+        <div class="price__regular"><span class="price-item price-item--regular">29,90 €</span></div>
+        <div class="price__sale"><span class="visually-hidden">Normaler Preis</span><s class="price-item">29,90 €</s>
+          <span class="visually-hidden">Verkaufspreis</span><span class="price-item price-item--sale">24,90 €</span></div>
+      </div>
+    </div></li>
+    <li class="grid__item"><div class="card">
+      <img src="/img/p3.png" alt="Zerup" width="600" height="600">
+      <h3><a href="/products/zerup">Zerup Sirup</a></h3>
+      <p><span>39,93 € / kg</span> <span class="amount">5,99 €</span></p>
+    </div></li>
+    <li class="grid__item"><div class="card">
+      <img src="/img/p4.png" alt="" width="600" height="600">
+      <a href="/products/bundle" class="product-card__title">Probierbox mit sechs Sorten Protein Pudding, drei Saucen und einem Shaker für den perfekten Start</a>
+      <span class="product-card__subtitle">Testshop Team</span>
+      <span class="price">12,49 €</span>
+    </div></li>
+  </ul>
+  <div class="tab-hidden"><div class="card"><img src="/img/p1.png" alt="" width="600" height="600">
+    <h3><a href="/products/hidden">Verstecktes Produkt</a></h3><span class="price">9,99 €</span></div></div>
+  <section class="reviews"><div class="review">
+    <a href="/products/sleep-gummies"><img src="/img/p4.png" alt="">vor 8 Monaten Perfekt Mein täglicher Begleiter</a></div></section>
+</main>
+<footer><img src="/img/visa-logo.png" width="60" height="40" alt="Visa"> <a href="/pages/impressum">Impressum</a></footer>
+</body>
+</html>
