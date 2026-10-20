@@ -100,6 +100,24 @@ def check_gemini(config: Config) -> list[CheckResult]:
                         f"нет ключа; добавьте {KEY_ENV}=... в .env (https://aistudio.google.com/apikey)")]
 
 
+def check_team(config: Config) -> list[CheckResult]:
+    """Команда ИИ («спроси всех: …»): какие участники есть на компьютере (не обязательно)."""
+    from .gemini import api_key
+    from .providers import ClaudeAgentBackend
+    from .team import CodexCLI
+    wanted = {str(k).lower() for k in config.get("team.members", [])}
+    found = {"Claude": ClaudeAgentBackend.available()[0] if "claude" in wanted else None,
+             "ChatGPT (codex)": bool(CodexCLI.find()) if "codex" in wanted else None,
+             "Gemini": bool(api_key()) if "gemini" in wanted else None,
+             "локальная модель": True if "local" in wanted else None}  # сама Ollama — отдельная проверка
+    names = [name for name, ok in found.items() if ok]
+    missing = [name for name, ok in found.items() if ok is False]
+    detail = ", ".join(names) or "никого"
+    if missing:
+        detail += f"; нет: {', '.join(missing)} (как подключить — README, «Команда ИИ»)"
+    return [CheckResult("команда ИИ", len(names) >= 2, detail, required=False)]
+
+
 def check_browser(config: Config) -> list[CheckResult]:
     """Playwright и его Chromium: нужны для поиска и управления браузером (не обязательны)."""
     if not config.get("browser.enabled", True):
@@ -201,7 +219,7 @@ def check_silero(config: Config) -> list[CheckResult]:
 
 def run_all(config: Config, voice: bool = True) -> list[CheckResult]:
     results = [check_python(), *check_packages(voice, config), *check_ollama(config),
-               *check_claude(config), *check_gemini(config),
+               *check_claude(config), *check_gemini(config), *check_team(config),
                *check_browser(config)]
     if voice:
         results += [check_vosk_model(config), check_whisper_model(config), check_gpu(),

@@ -366,6 +366,15 @@ code { font: 13px var(--code); }
 .job.fail .job-status { color: var(--danger); border-color: rgba(255, 90, 100, .5); }
 .job.skip { opacity: .65; }
 .job.wait .job-title { color: var(--ash); }
+/* команда ИИ: ответы участников и итог ведущего */
+.team-question { margin: 4px 0 0; font: 15px/1.4 var(--display); overflow-wrap: anywhere; }
+.job-time { margin-left: auto; flex: none; color: var(--ash); font: 12.5px var(--display); }
+.job-answer { margin-top: 4px; font-size: 13px; color: var(--ash); }
+.job-answer summary { cursor: pointer; overflow-wrap: anywhere; }
+.job-answer[open] summary { color: var(--bone); }
+.job-answer .body { margin-top: 6px; color: var(--bone); overflow-wrap: anywhere; }
+.team-final { margin-top: 12px; padding: 10px 12px; border: 1px solid rgba(var(--signal-rgb), .5); border-radius: 9px; }
+.team-final .body { margin-top: 4px; overflow-wrap: anywhere; }
 .site-result { margin-top: 12px; }
 .site-meta { margin: 0 0 8px; font: 13.5px var(--display); color: var(--ash); }
 .site-shots { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; }

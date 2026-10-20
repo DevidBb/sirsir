@@ -24,6 +24,8 @@
     site_find: "Ищу текущий сайт", site_analyze: "Разбираю текущий сайт", site_design: "Стиль и тексты",
     site_layout: "Вёрстка", site_check: "Проверка качества", site_show: "Показываю сайт", site_edit: "Правка сайта",
     site_open: "Открываю сайт", site_folder: "Папка сайта",
+    team_claude: "Спрашиваю Claude", team_codex: "Спрашиваю ChatGPT", team_gemini: "Спрашиваю Gemini",
+    team_local: "Спрашиваю локальную модель", team_lead: "Ведущий сводит ответы",
   };
 
   let ws = null, reconnectDelay = 500, uiState = "idle", uiVersion = null, replayed = false;
@@ -67,7 +69,9 @@
           ev.history.slice(-60).forEach(h => { if (h.type !== "state") timelineEvent(h, true); });
         }
         if (!replayed) { replayed = true; replayFeed((ev.history || []).slice(-80)); }
-        { const sites = (ev.history || []).filter(h => h.type === "site"); if (sites.length) renderProject(sites[sites.length - 1].project); }
+        { const jobs = (ev.history || []).filter(h => h.type === "site" || h.type === "team");
+          const last = jobs[jobs.length - 1];
+          if (last) last.type === "site" ? renderProject(last.project) : renderTeam(last.job); }
         applyUpdateInfo(ev.update);
         break;
       case "update": update.status = ev; renderUpdate(); break;
@@ -95,6 +99,7 @@
       case "route": timelineEvent(ev); break;
       case "delegate": timelineAdd("task", "Поручение агенту " + (AGENT_TEXT[ev.agent] || ev.agent), ev.text || "", "", ev.ts); break;
       case "site": renderProject(ev.project, true); break;
+      case "team": renderTeam(ev.job, true); break;
     }
   }
 
@@ -386,6 +391,55 @@
     }
     // Новая задача студии — показать вкладку «Проекты» (один раз за задачу, дальше вкладку выбирает человек).
     const key = p.id + "|" + p.kind + "|" + (p.steps || []).length;
+    if (live && shownProject !== key) {
+      shownProject = key;
+      const tab = document.querySelector('.tab[data-tab="projects"]');
+      if (tab && !tab.classList.contains("active")) tab.click();
+    }
+  }
+  // Команда ИИ: карточка на каждого участника (статус, время, ответ), ведущий и итог.
+  function renderTeam(j, live) {
+    if (!j) return;
+    const box = $("project");
+    box.innerHTML = "";
+    const head = el("div", "panel-head");
+    head.appendChild(el("h3", "", "Команда ИИ"));
+    box.append(head, el("p", "team-question", "«" + j.question + "»"));
+    const list = el("ol", "jobs");
+    (j.answers || []).forEach(a => {
+      const li = el("li", "job " + a.status);
+      const top = el("div", "job-top");
+      top.append(el("span", "job-status", STEP_STATUS[a.status] || a.status), el("span", "job-title", a.title));
+      if (a.status === "ok" || a.status === "fail") top.appendChild(el("span", "job-time", Math.round(a.seconds) + " с"));
+      li.appendChild(top);
+      if (a.text && a.status === "ok") {
+        const plain = a.text.replace(/^\s*(?:[-*•]|\d+[.)])\s+/gm, "").replace(/[*_`#|]+/g, "").replace(/\s+/g, " ").trim();
+        const more = el("details", "job-answer");
+        const full = el("div", "body");
+        full.innerHTML = md.render(a.text);
+        more.append(el("summary", "", plain.length > 140 ? plain.slice(0, 140) + "…" : plain), full);
+        li.appendChild(more);
+      } else if (a.text) li.appendChild(el("p", "job-detail", a.text));
+      list.appendChild(li);
+    });
+    if (j.lead && j.lead_status !== "skip") {
+      const li = el("li", "job " + j.lead_status);
+      const top = el("div", "job-top");
+      const who = (j.answers || []).find(a => a.key === j.lead);
+      top.append(el("span", "job-status", STEP_STATUS[j.lead_status] || j.lead_status),
+        el("span", "job-title", "Ведущий " + (who ? who.title : j.lead) + " сводит ответы"));
+      li.appendChild(top);
+      list.appendChild(li);
+    }
+    box.appendChild(list);
+    if (j.final) {
+      const fin = el("div", "team-final");
+      const body = el("div", "body");
+      body.innerHTML = md.render(j.final);
+      fin.append(el("p", "scores-head", "Итог команды" + (j.seconds ? ` · за ${j.seconds} с` : "")), body);
+      box.appendChild(fin);
+    }
+    const key = j.id + "|team";
     if (live && shownProject !== key) {
       shownProject = key;
       const tab = document.querySelector('.tab[data-tab="projects"]');

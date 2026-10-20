@@ -215,6 +215,8 @@ HELP_TEXT = ("Я умею: открывать любые установленн�
              "сворачивать окна; печатать под диктовку и в нужное окно, сочинять письма и "
              "сообщения, нажимать «сохрани», «копировать», «вставить», «отмени ввод»; "
              "блокировать и выключать компьютер; "
+             "делать сайты для бизнеса — «сделай сайт для кофейни …»; "
+             "спрашивать сразу всю команду ИИ — «спроси всех: …»; "
              "рассказывать о системе и просто отвечать на вопросы. "
              "Скажите «стоп», чтобы перебить меня.")
 
@@ -263,6 +265,8 @@ class Assistant:
         self.agent_backend: Any = None
         # Студия сайтов («сделай сайт для …», см. site_studio.py).
         self.sites: Any = None
+        # Команда ИИ («спроси всех: …», см. team.py).
+        self.team: Any = None
         # Навыки (skills/*/SKILL.md) и навык, действующий в текущей задаче.
         self.skills: Any = None
         self.active_skill: Any = None
@@ -344,6 +348,10 @@ class Assistant:
         site = self._site_command(text, on_sentence)
         if site is not None:
             return site
+
+        team = self._team_command(text, on_sentence)
+        if team is not None:
+            return team
 
         composite = self._composite(text)
         if composite is not None:
@@ -640,9 +648,11 @@ class Assistant:
         return Reply(f"Вот что получилось: {preview} " + self.confirmations.request(
             f"напечатать этот текст {destination}", type_draft))
 
-    def _claude_text(self, system_prompt: str, request: str, stream: bool = True) -> str | None:
+    def _claude_text(self, system_prompt: str, request: str, stream: bool = True, backend: Any = None) -> str | None:
         """Текст от Claude без инструментов, в отдельной сессии; None — Claude не ответил.
-        stream=False — не показывать текст в чате HUD по мере генерации (например, JSON сайта)."""
+        stream=False — не показывать текст в чате HUD по мере генерации (например, JSON сайта).
+        backend — другой клиент Claude (команда ИИ, когда основной провайдер — Ollama или Gemini)."""
+        backend = backend or self.agent_backend
         import copy
 
         class TextOnlySkill:
@@ -664,17 +674,17 @@ class Assistant:
             isolated.on_event = lambda event: None if event.get("type") in ("delta", "delta_end") else emit(event)
         # Отдельная сессия Claude, затем возврат к диалогу пользователя (как в run_unattended):
         # reset() здесь стёр бы весь разговор с Claude.
-        saved_session = getattr(self.agent_backend, "session_id", None)
-        self.agent_backend.session_id = None
+        saved_session = getattr(backend, "session_id", None)
+        backend.session_id = None
         try:
-            generated = self.agent_backend.run(isolated, request, None)
+            generated = backend.run(isolated, request, None)
             if generated.ok and generated.text.strip():
                 return generated.text.strip()
             log.warning("Claude не составил текст: %s", generated.text)
         except Exception:
             log.exception("Не удалось составить текст через Claude")
         finally:
-            self.agent_backend.session_id = saved_session
+            backend.session_id = saved_session
         return None
 
     def write_structured(self, system_prompt: str, request: str, max_tokens: int = 3000) -> tuple[str, str]:
@@ -736,6 +746,31 @@ class Assistant:
             outcome = studio.revise(instruction, say, cancelled)
         else:
             outcome = studio.build(request, say, cancelled)
+        self.conversation.begin_turn(text)
+        self.conversation.add({"role": "assistant", "content": outcome.text})
+        self.conversation.end_turn()
+        return Reply(outcome.text, data=outcome.data, ok=outcome.ok)
+
+    # --- команда ИИ ---
+    def _team_command(self, text: str, on_sentence: Callable[[str], bool] | None) -> Reply | None:
+        """«Спроси всех: …», «обсудите командой: …». None — реплика не для команды."""
+        from .team import parse_team_request
+        if self.team is None or self.unattended:
+            return None
+        question = parse_team_request(text)
+        if question is None:
+            return None
+        if not question:
+            return Reply("Что спросить у команды? Скажите, например: «спроси всех: какой ноутбук взять для монтажа».")
+        self.emergency.reset()
+        muted = False
+
+        def say(line: str) -> None:
+            nonlocal muted
+            if on_sentence is not None and not muted and on_sentence(line) is False:
+                muted = True  # перебили голосом — молчим, но команду не бросаем
+
+        outcome = self.team.run(question, say, lambda: self.emergency.active)
         self.conversation.begin_turn(text)
         self.conversation.add({"role": "assistant", "content": outcome.text})
         self.conversation.end_turn()
