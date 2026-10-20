@@ -276,7 +276,8 @@ code { font: 13px var(--code); }
 
 /* --- подробности справа --- */
 .side-col { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--seam); border-radius: 12px; background: rgba(var(--signal-rgb), .015); }
-.tabs { display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--seam); overflow-x: auto; scrollbar-width: none; }
+/* Вкладок шесть, а колонка узкая: лишние переносятся во второй ряд — видны все, без скрытой прокрутки. */
+.tabs { display: flex; flex-wrap: wrap; column-gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--seam); }
 .tab {
   flex: none; font: 500 15px var(--display); color: var(--ash); background: none; border: 0;
   border-bottom: 2px solid transparent; padding: 13px 10px 11px; cursor: pointer; white-space: nowrap;
