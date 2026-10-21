@@ -112,17 +112,29 @@ class OllamaClient:
         self.keep_alive = keep_alive
         self.last_stats: dict[str, Any] = {}
 
+    def _headers(self) -> dict[str, str]:
+        return {"Content-Type": "application/json"}
+
+    def _http_error(self, code: int, body: str) -> str:
+        return f"Ollama вернула ошибку {code}: {body[:300]}"
+
+    def _prepare_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return payload
+
     def _request(self, path: str, payload: dict | None = None, timeout: float | None = None) -> dict:
         data = json.dumps(payload).encode() if payload is not None else None
         req = urllib.request.Request(self.base_url + path, data=data,
-                                     headers={"Content-Type": "application/json"},
+                                     headers=self._headers(),
                                      method="POST" if data else "GET")
         try:
             with urllib.request.urlopen(req, timeout=timeout or self.timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+                result = json.loads(resp.read().decode("utf-8"))
+                if result.get("error"):
+                    raise LLMError(self._http_error(200, str(result["error"])))
+                return result
         except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", "replace")[:300]
-            raise LLMError(f"Ollama вернула ошибку {e.code}: {body}") from e
+            body = e.read().decode("utf-8", "replace")
+            raise LLMError(self._http_error(e.code, body)) from e
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
             raise LLMError(f"Ollama недоступна по адресу {self.base_url}: {e}") from e
 
@@ -137,10 +149,12 @@ class OllamaClient:
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
              on_text: Callable[[str], bool] | None = None,
-             options: dict[str, Any] | None = None, model: str | None = None) -> dict[str, Any]:
+             options: dict[str, Any] | None = None, model: str | None = None,
+             fmt: str | None = None) -> dict[str, Any]:
         """Запрос к модели. С on_text ответ приходит потоком: функция получает
         каждый кусочек текста и может вернуть False, чтобы прервать генерацию.
-        model — другая модель Ollama для этого запроса (например, с поддержкой изображений)."""
+        model — другая модель Ollama для этого запроса (например, с поддержкой изображений).
+        fmt="json" — ответ строго JSON-объектом (режим format Ollama)."""
         payload: dict[str, Any] = {
             "model": model or self.model,
             "messages": messages,
@@ -153,6 +167,9 @@ class OllamaClient:
         }
         if tools:
             payload["tools"] = tools
+        if fmt:
+            payload["format"] = fmt
+        payload = self._prepare_payload(payload)
         if on_text is None:
             data = self._request("/api/chat", payload)
             message = data.get("message") or {}
@@ -172,7 +189,7 @@ class OllamaClient:
 
     def _stream(self, payload: dict, on_text: Callable[[str], bool]) -> tuple[dict, dict]:
         req = urllib.request.Request(self.base_url + "/api/chat", data=json.dumps(payload).encode(),
-                                     headers={"Content-Type": "application/json"}, method="POST")
+                                     headers=self._headers(), method="POST")
         content: list[str] = []
         tool_calls: list[dict] = []
         last: dict = {}
@@ -183,7 +200,7 @@ class OllamaClient:
                         continue
                     last = json.loads(raw.decode("utf-8"))
                     if last.get("error"):
-                        raise LLMError(f"Ollama: {last['error']}")
+                        raise LLMError(self._http_error(200, str(last["error"])))
                     msg = last.get("message") or {}
                     tool_calls.extend(msg.get("tool_calls") or [])
                     piece = msg.get("content") or ""
@@ -194,8 +211,8 @@ class OllamaClient:
                     if last.get("done"):
                         break
         except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", "replace")[:300]
-            raise LLMError(f"Ollama вернула ошибку {e.code}: {body}") from e
+            body = e.read().decode("utf-8", "replace")
+            raise LLMError(self._http_error(e.code, body)) from e
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
             raise LLMError(f"Ollama недоступна по адресу {self.base_url}: {e}") from e
         message: dict[str, Any] = {"role": "assistant", "content": "".join(content)}

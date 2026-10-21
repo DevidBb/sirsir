@@ -36,7 +36,7 @@ LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 MAX_IMPORT_BYTES = 5_000_000
 # Инструменты, которые кнопки интерфейса могут вызвать напрямую (без модели).
 UI_TOOLS = {"open_result", "browser_tabs", "browser_switch_tab", "browser_screenshot", "read_page",
-            "browser_back"}
+            "browser_back", "site_open", "site_folder"}
 FAVICON = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="12" '
            'fill="none" stroke="#54c8ff" stroke-width="3"/><circle cx="16" cy="16" r="5" fill="#54c8ff"/></svg>')
 IDLE, THINKING, ACTING, ERROR = "idle", "thinking", "acting", "error"

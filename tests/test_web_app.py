@@ -211,9 +211,9 @@ def test_memory_export_import_api(server):
     assert client.post("/api/memory/import", content=b"{}", headers={"origin": "http://evil.example"}).status_code == 403
 
 
-def test_hybrid_is_the_shipped_default():
+def test_team_is_the_shipped_default():
     from jarvis.config import Config
-    assert Config.load(ROOT / "config.toml").get("llm.provider") == "hybrid"
+    assert Config.load(ROOT / "config.toml").get("llm.provider") == "team"
 
 
 # --- обновления: состояние, проверка, «Обновить и перезапустить» ---

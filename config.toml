@@ -14,6 +14,8 @@ follow_up_seconds = 8
 log_file = "data/jarvis.log"
 # В режиме диктовки: сколько секунд тишины завершают диктовку.
 dictation_pause_seconds = 30
+# Как Джарвис обращается к владельцу в репликах студии сайтов («Готово, сэр»): «сэр», «босс», имя.
+address = "сэр"
 # Отклик на «Джарвис»: "beep" — короткий сигнал (можно сразу говорить команду),
 # "voice" — слово «Слушаю».
 wake_feedback = "beep"
@@ -78,13 +80,20 @@ max_tool_calls_per_turn = 3
 # "hybrid" — быстрые команды локально; короткие вопросы к Ollama; сложные и актуальные запросы к Claude.
 # "ollama" — только локальная модель; "claude" — Claude Agent SDK для всех запросов, требующих LLM;
 # "gemini" — Gemini (облако Google, бесплатный тариф) вместо Ollama, нужен GEMINI_API_KEY в .env.
+# "team" — Ollama Cloud, ChatGPT/Codex, Gemini, Claude и локальная модель вместе;
+# "codex" — ответы ChatGPT через Codex CLI; "ollama_cloud" — только Ollama Cloud.
 # Для Claude нужна авторизация "claude login" или ANTHROPIC_API_KEY в окружении.
 # При отсутствии пакета Claude гибридный режим автоматически оставляет все ответы локальными.
 # Переключение: HUD → Настройки → Модель.
-provider = "hybrid"
+provider = "team"
 # Модель Ollama с поддержкой изображений для «посмотри на экран» (пусто — нет;
 # например "qwen2.5vl:7b", ~6 ГБ: ollama pull qwen2.5vl:7b). С провайдером claude не нужна.
 vision_model = ""
+
+[llm.ollama_cloud]
+# Имя из https://ollama.com/api/tags, без суффикса :cloud (он нужен только локальному CLI).
+model = "gemma4:31b"
+timeout_seconds = 90
 
 [llm.gemini]
 # Модель Gemini (бесплатный тариф). Самые новые («gemini-flash-latest», 3.7/3.8) часто перегружены
@@ -185,6 +194,29 @@ enabled = true
 enabled = true
 # Дополнительные папки с навыками (необязательно):
 extra_dirs = []
+
+[sites]
+# Студия сайтов: «Джарвис, сделай новый сайт для кофейни Зерно» / «переделай сайт example.ru».
+# Каждый сайт — папка с одним index.html (+ spec.json и история версий): можно отправить клиенту
+# или загрузить на любой хостинг. Тексты пишет выбранная модель (в гибриде — Claude).
+dir = "data/sites"
+
+[team]
+# Команда ИИ: «спроси всех: …», «обсудите командой: …». Вопрос уходит всем участникам сразу,
+# потом ведущий сверяет ответы и пишет один итог: в чём сошлись, где разошлись.
+# claude — Claude Code (вход claude.ai), codex — ChatGPT через Codex CLI (вход «codex login»),
+# gemini — нужен GEMINI_API_KEY в .env, ollama_cloud — OLLAMA_API_KEY,
+# local — Ollama на этом компьютере. Облачные участники
+# получают вопрос через интернет. Участник, которого нет на компьютере, просто не зовётся.
+members = ["claude", "codex", "gemini", "ollama_cloud", "local"]
+# Ведущий: "auto" — доступный по порядку claude → codex → gemini → ollama_cloud → local; или имя участника.
+lead = "auto"
+# Сколько ждать ответа участника, секунд (локальная модель на процессоре думает долго).
+timeout_seconds = 150
+# Первый участник ответил — остальных ждём ещё столько секунд, отставших останавливаем.
+patience_seconds = 60
+# Модель ChatGPT в Codex; пусто — модель Codex по умолчанию.
+codex_model = ""
 
 [mcp]
 # Внешние MCP-серверы (Model Context Protocol). Каждый запускается как отдельная программа

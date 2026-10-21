@@ -21,6 +21,11 @@
     search_files: "Ищу файлы", delete_file: "Удаляю в корзину", list_windows: "Окна", close_window: "Закрываю окно", lock_screen: "Блокирую экран",
     schedule_task: "Планирую задачу", list_schedules: "Плановые задачи", cancel_schedule: "Отменяю плановую задачу", use_skill: "Навык",
     shutdown_computer: "Выключение", restart_computer: "Перезагрузка", sleep_computer: "Сон", cancel_shutdown: "Отмена выключения",
+    site_find: "Ищу текущий сайт", site_analyze: "Разбираю текущий сайт", site_design: "Стиль и тексты", site_review: "Команда проверяет тексты", site_polish: "Правки по замечаниям",
+    site_layout: "Вёрстка", site_check: "Проверка качества", site_show: "Показываю сайт", site_edit: "Правка сайта",
+    site_open: "Открываю сайт", site_folder: "Папка сайта",
+    team_claude: "Спрашиваю Claude", team_codex: "Спрашиваю ChatGPT", team_gemini: "Спрашиваю Gemini",
+    team_local: "Спрашиваю локальную модель", team_ollama_cloud: "Спрашиваю Ollama Cloud", team_lead: "Ведущий сводит ответы",
   };
 
   let ws = null, reconnectDelay = 500, uiState = "idle", uiVersion = null, replayed = false;
@@ -64,6 +69,9 @@
           ev.history.slice(-60).forEach(h => { if (h.type !== "state") timelineEvent(h, true); });
         }
         if (!replayed) { replayed = true; replayFeed((ev.history || []).slice(-80)); }
+        { const jobs = (ev.history || []).filter(h => h.type === "site" || h.type === "team");
+          const last = jobs[jobs.length - 1];
+          if (last) last.type === "site" ? renderProject(last.project) : renderTeam(last.job); }
         applyUpdateInfo(ev.update);
         break;
       case "update": update.status = ev; renderUpdate(); break;
@@ -90,6 +98,8 @@
       case "skill": timelineAdd("task", "Навык: " + ev.name, ev.description || "", "", ev.ts); break;
       case "route": timelineEvent(ev); break;
       case "delegate": timelineAdd("task", "Поручение агенту " + (AGENT_TEXT[ev.agent] || ev.agent), ev.text || "", "", ev.ts); break;
+      case "site": renderProject(ev.project, true); break;
+      case "team": renderTeam(ev.job, true); break;
     }
   }
 
@@ -279,8 +289,175 @@
         pre.appendChild(span);
       });
       det.append(sum, pre); wrap.appendChild(det);
+    } else if (data.kind === "site" && data.project && data.project.result) {
+      wrap.className = "site-card";
+      wrap.appendChild(siteResult(data.project.result, true));
     }
     return wrap;
+  }
+
+  // ---------- студия сайтов: вкладка «Проекты» ----------
+  const STEP_STATUS = { wait: "ждёт", run: "в работе", ok: "готово", skip: "пропущено", fail: "ошибка" };
+  const dismissed = new Set();   // отклонённые предложения: «проект|текст»
+  let shownProject = null;
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function shot(file, alt, cls) {
+    const img = el("img", cls || "site-shot");
+    img.alt = alt; img.loading = "lazy";
+    img.src = "/api/screenshots/" + encodeURIComponent(file);
+    return img;
+  }
+  function siteResult(r, compact) {
+    const box = el("div", "site-result");
+    const meta = [r.seconds != null ? `за ${r.seconds} с` : "", r.model, r.style ? `стиль «${r.style}»` : "",
+      r.background === "dark" ? "тёмная тема" : ""].filter(Boolean).join(" · ");
+    if (meta) box.appendChild(el("p", "site-meta", meta));
+    if ((r.team || []).length) {  // «… командой»: что заметил каждый ИИ команды
+      const team = el("div", "site-team");
+      team.appendChild(el("p", "scores-head", "Замечания команды"));
+      r.team.forEach(n => {
+        const more = el("details", "job-answer");
+        more.appendChild(el("summary", "", n.status === "ok" ? `${n.title} · ${Math.round(n.seconds)} с` : `${n.title} · не ответил`));
+        const body = el("div", "body");
+        if (n.status === "ok") body.innerHTML = md.render(n.text); else body.textContent = n.text;
+        more.appendChild(body);
+        team.appendChild(more);
+      });
+      box.appendChild(team);
+    }
+    if (r.shots) {
+      const shots = el("div", "site-shots");
+      shots.append(shot(r.shots.desktop, "Новый сайт на компьютере", "site-shot desk"),
+        shot(r.shots.mobile, "Новый сайт на телефоне", "site-shot phone"));
+      box.appendChild(shots);
+    }
+    if ((r.rows || []).length) {
+      const t = el("div", "scores");
+      const hasBefore = r.rows.some(x => x.before != null);
+      t.appendChild(el("p", "scores-head", hasBefore ? "Проверка качества: было → стало" : "Проверка качества нового сайта"));
+      r.rows.forEach(x => {
+        const row = el("div", "score-row");
+        row.appendChild(el("span", "score-label", x.label));
+        const bars = el("div", "score-bars");
+        if (x.before != null) { const b = el("i", "bar before"); b.style.width = x.before + "%"; bars.appendChild(b); }
+        const a = el("i", "bar after"); a.style.width = (x.after || 0) + "%"; bars.appendChild(a);
+        row.appendChild(bars);
+        row.appendChild(el("span", "score-num", (x.before != null ? x.before + " → " : "") + (x.after != null ? x.after : "—")));
+        t.appendChild(row);
+      });
+      box.appendChild(t);
+    }
+    const acts = el("div", "row site-acts");
+    const open = el("button", "btn primary", "Открыть сайт"); open.type = "button";
+    open.onclick = () => send({ type: "tool", name: "site_open", args: {} });
+    const folder = el("button", "btn", "Папка с файлами"); folder.type = "button";
+    folder.onclick = () => send({ type: "tool", name: "site_folder", args: {} });
+    acts.append(open, folder);
+    box.appendChild(acts);
+    if (!compact && r.before_shots && r.before_shots.desktop) {
+      const det = el("details", "site-before");
+      det.appendChild(el("summary", "", "Как было: " + (r.before_url || "старый сайт")));
+      det.appendChild(shot(r.before_shots.desktop, "Старый сайт на компьютере", "site-shot desk"));
+      box.appendChild(det);
+    }
+    return box;
+  }
+  function renderProject(p, live) {
+    if (!p) return;
+    const box = $("project");
+    box.innerHTML = "";
+    const head = el("div", "panel-head");
+    head.appendChild(el("h3", "", (p.kind === "edit" ? "Правка сайта «" : "Сайт «") + (p.brand || p.id) + "»"));
+    if (p.url) head.appendChild(link(p.url, p.url.replace(/^https?:\/\//, "").replace(/\/$/, "")));
+    box.appendChild(head);
+    const list = el("ol", "jobs");
+    (p.steps || []).forEach(s => {
+      const li = el("li", "job " + s.status);
+      const top = el("div", "job-top");
+      top.append(el("span", "job-status", STEP_STATUS[s.status] || s.status), el("span", "job-title", s.title));
+      li.appendChild(top);
+      if (s.detail) li.appendChild(el("p", "job-detail", s.detail));
+      list.appendChild(li);
+    });
+    box.appendChild(list);
+    if (p.result) box.appendChild(siteResult(p.result, false));
+    const props = (p.proposals || []).filter(x => !dismissed.has(p.id + "|" + x.text));
+    if (props.length) {
+      box.appendChild(el("h3", "", "Предложения"));
+      const ul = el("ul", "proposals");
+      props.forEach(x => {
+        const li = el("li", "proposal");
+        li.appendChild(el("span", "", x.text));
+        const acts = el("div", "row");
+        const yes = el("button", "btn primary", "Сделать"); yes.type = "button";
+        yes.onclick = () => { if (send({ type: "message", text: x.say })) li.remove(); };
+        const no = el("button", "btn", "Отклонить"); no.type = "button";
+        no.onclick = () => { dismissed.add(p.id + "|" + x.text); li.remove(); };
+        acts.append(yes, no); li.appendChild(acts); ul.appendChild(li);
+      });
+      box.appendChild(ul);
+    }
+    // Новая задача студии — показать вкладку «Проекты» (один раз за задачу, дальше вкладку выбирает человек).
+    const key = p.id + "|" + p.kind + "|" + (p.steps || []).length;
+    if (live && shownProject !== key) {
+      shownProject = key;
+      const tab = document.querySelector('.tab[data-tab="projects"]');
+      if (tab && !tab.classList.contains("active")) tab.click();
+    }
+  }
+  // Команда ИИ: карточка на каждого участника (статус, время, ответ), ведущий и итог.
+  function renderTeam(j, live) {
+    if (!j) return;
+    const box = $("project");
+    box.innerHTML = "";
+    const head = el("div", "panel-head");
+    head.appendChild(el("h3", "", "Команда ИИ"));
+    box.append(head, el("p", "team-question", "«" + j.question + "»"));
+    const list = el("ol", "jobs");
+    (j.answers || []).forEach(a => {
+      const li = el("li", "job " + a.status);
+      const top = el("div", "job-top");
+      top.append(el("span", "job-status", STEP_STATUS[a.status] || a.status), el("span", "job-title", a.title));
+      if (a.status === "ok" || a.status === "fail") top.appendChild(el("span", "job-time", Math.round(a.seconds) + " с"));
+      li.appendChild(top);
+      if (a.text && a.status === "ok") {
+        const plain = a.text.replace(/^\s*(?:[-*•]|\d+[.)])\s+/gm, "").replace(/[*_`#|]+/g, "").replace(/\s+/g, " ").trim();
+        const more = el("details", "job-answer");
+        const full = el("div", "body");
+        full.innerHTML = md.render(a.text);
+        more.append(el("summary", "", plain.length > 140 ? plain.slice(0, 140) + "…" : plain), full);
+        li.appendChild(more);
+      } else if (a.text) li.appendChild(el("p", "job-detail", a.text));
+      list.appendChild(li);
+    });
+    if (j.lead && j.lead_status !== "skip") {
+      const li = el("li", "job " + j.lead_status);
+      const top = el("div", "job-top");
+      const who = (j.answers || []).find(a => a.key === j.lead);
+      top.append(el("span", "job-status", STEP_STATUS[j.lead_status] || j.lead_status),
+        el("span", "job-title", "Ведущий " + (who ? who.title : j.lead) + " сводит ответы"));
+      li.appendChild(top);
+      list.appendChild(li);
+    }
+    box.appendChild(list);
+    if (j.final) {
+      const fin = el("div", "team-final");
+      const body = el("div", "body");
+      body.innerHTML = md.render(j.final);
+      fin.append(el("p", "scores-head", "Итог команды" + (j.seconds ? ` · за ${j.seconds} с` : "")), body);
+      box.appendChild(fin);
+    }
+    const key = j.id + "|team";
+    if (live && shownProject !== key) {
+      shownProject = key;
+      const tab = document.querySelector('.tab[data-tab="projects"]');
+      if (tab && !tab.classList.contains("active")) tab.click();
+    }
   }
   function showData(data) {
     if (!["youtube", "web", "screenshot", "screen"].includes(data.kind)) return;
@@ -489,6 +666,11 @@
   };
   // Быстрые команды — те же фразы, что можно сказать или написать.
   document.querySelectorAll("#chips [data-say]").forEach(b => b.onclick = () => send({ type: "message", text: b.dataset.say }));
+  // «Сайт для бизнеса»: начало команды в поле ввода — осталось дописать, для кого.
+  document.querySelectorAll("#chips [data-fill]").forEach(b => b.onclick = () => {
+    const input = $("input"); input.value = b.dataset.fill; input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  });
 
   // ---------- обновления ----------
   // Сервер проверяет обновления сам (git fetch при запуске и раз в несколько часов) и шлёт
@@ -778,7 +960,15 @@
       r.onchange = async () => { await api("/api/settings", { method: "POST", body: JSON.stringify({ provider: key }) }); refreshStatus(); };
       const t = document.createElement("div");
       const gem = s.provider.gemini || {};
-      const extra = key === "gemini"
+      const cloud = s.provider.ollama_cloud || {};
+      const participants = (s.provider.team || {}).members || [];
+      const extra = key === "team"
+        ? " " + participants.filter(m => m.enabled).map(m => m.title + ": " + m.note).join("; ") + "."
+        : key === "codex"
+        ? ` ${(s.provider.codex || {}).note || "Нужен вход codex login"}.`
+        : key === "ollama_cloud"
+        ? (cloud.available ? ` Модель: ${cloud.model}. Ключ найден.` : ` Недоступно: ${cloud.note}.`)
+        : key === "gemini"
         ? (gem.available ? ` Модель: ${gem.model}. Ключ найден.` : ` Недоступно: ${gem.note}.`)
         : key === "claude"
         ? (s.provider.claude.available ? ` Модель: ${s.provider.claude.model || "по умолчанию"}. ${s.provider.claude.note}.` : ` Недоступно: ${s.provider.claude.note}.`)
@@ -788,7 +978,8 @@
             (s.ollama_ready === false ? " Ollama не отвечает или модель не скачана." : "")
           : ` Модель: ${s.provider.ollama.model}.` + (s.ollama_ready === false ? " Ollama не отвечает или модель не скачана." : "");
       t.innerHTML = `<div><b></b></div><div class="pnote"></div>`;
-      t.querySelector("b").textContent = key === "claude" ? "Claude (Agent SDK)" : key === "gemini" ? "Gemini (Google)" : key === "hybrid" ? "Гибрид (Ollama + Claude)" : "Ollama";
+      t.querySelector("b").textContent = {team: "Команда ИИ", codex: "ChatGPT (Codex)", ollama_cloud: "Ollama Cloud",
+        claude: "Claude (Agent SDK)", gemini: "Gemini (Google)", hybrid: "Гибрид (Ollama + Claude)", ollama: "Ollama"}[key] || key;
       t.querySelector(".pnote").textContent = note + "." + extra;
       d.append(r, t); pv.appendChild(d);
     });
@@ -801,6 +992,14 @@
       gemini.disabled = !s.provider.gemini.available && s.provider.active !== "gemini";
       gemini.title = s.provider.gemini.available ? "Все вопросы к модели — Gemini (облако Google)"
         : "Gemini недоступен: " + s.provider.gemini.note;
+    }
+    for (const key of ["codex", "ollama_cloud"]) {
+      const button = document.querySelector(`#modeSwitch [data-provider="${key}"]`);
+      const status = s.provider[key];
+      if (button && status) {
+        button.disabled = !status.available && s.provider.active !== key;
+        if (!status.available) button.title = status.note;
+      }
     }
     renderSkills(s.skills || []);
     const tl = $("tools"); tl.innerHTML = "";

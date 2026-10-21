@@ -17,10 +17,10 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from . import calculator, checks, console_utf8, files, mcp_client, skills
+from . import calculator, checks, console_utf8, files, mcp_client, site_studio, skills, team
 from .assistant import EXIT, MUTE, STOP, Assistant, Reply
 from .config import Config, load_dotenv
-from .gemini import GEMINI_HOST, GeminiClient, api_key as gemini_key, make_llm
+from .gemini import GEMINI_HOST, api_key as gemini_key, make_llm
 from .memory import Memory
 from .notes import Notes
 from .providers import make_agent_backend
@@ -105,6 +105,16 @@ class App:
         # Навыки: skills/<имя>/SKILL.md — инструкция и набор инструментов для повторяемых задач.
         self.skills = skills.setup(config, self.registry)
         self.assistant.skills = self.skills
+        # Студия сайтов: «сделай сайт для …» — разбор старого сайта, тексты моделью, вёрстка, проверка.
+        self.sites = site_studio.setup(config, self.assistant, self.browser,
+                                       self.web_tools.search if self.web_tools else None)
+        self.sites.register_tools(self.registry)
+        self.assistant.sites = self.sites
+        # Команда ИИ: «спроси всех: …» — Claude, ChatGPT (Codex), Gemini и локальная модель отвечают
+        # параллельно, ведущий сводит ответы в один итог.
+        self.team = team.setup(config, self.assistant)
+        self.assistant.team = self.team
+        self.sites.team = self.team  # «сделай сайт … командой»: тексты проверяют остальные ИИ
 
     def _setup_browser(self) -> None:
         """Браузер Джарвиса (Playwright). Без Playwright помощник работает как раньше."""
@@ -132,9 +142,11 @@ class App:
         from .providers import PROVIDERS
         if provider not in PROVIDERS:
             raise ValueError(f"Неизвестный провайдер: {provider}")
+        previous = str(self.config.get("llm.provider", "ollama"))
         self.config.set("llm.provider", provider)
         self.memory.set_setting("llm.provider", provider)
-        if (provider == "gemini") != isinstance(self.llm, GeminiClient):  # Claude и гибрид оставляют Ollama
+        transports = {"gemini": "gemini", "ollama_cloud": "ollama_cloud"}
+        if transports.get(provider, "local") != transports.get(previous, "local"):
             self.llm.unload()
             self.llm = self.assistant.llm = make_llm(self.config)
         if self.assistant.agent_backend is not None:
@@ -544,6 +556,7 @@ class App:
     def close(self) -> None:
         if self.assistant.agent_backend is not None:
             self.assistant.agent_backend.close(wait=5)
+        self.team.close()
         self.reminders.stop()
         self.schedules.stop()
         if self.mcp is not None:
@@ -691,7 +704,9 @@ def main(argv: list[str] | None = None) -> int:
     log.info("Запуск JARVIS: %s, Python %s, режим %s", _platform.platform(),
              sys.version.split()[0], "голос" if voice else "текст")
 
-    if config.get("llm.autostart_ollama", True) and config.get("llm.provider", "ollama") == "ollama":
+    provider = str(config.get("llm.provider", "ollama"))
+    needs_local = provider in ("ollama", "hybrid") or (provider == "team" and "local" in config.get("team.members", []))
+    if config.get("llm.autostart_ollama", True) and needs_local:
         from .llm import OllamaClient as _Client, ensure_ollama
         status = ensure_ollama(_Client(config.get("llm.base_url"), config.get("llm.model")))
         if status == "started":
@@ -712,6 +727,9 @@ def main(argv: list[str] | None = None) -> int:
     hosts = list(config.get("security.allowed_hosts", ["127.0.0.1", "localhost"]))
     if gemini_key():  # Gemini — HTTPS из процесса помощника, только к API Google
         hosts.append(GEMINI_HOST)
+    from .ollama_cloud import HOST as OLLAMA_CLOUD_HOST, api_key as cloud_key
+    if cloud_key():
+        hosts.append(OLLAMA_CLOUD_HOST)
     NetworkGuard(hosts).install()
     if args.web:
         from . import web_app

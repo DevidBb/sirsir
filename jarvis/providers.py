@@ -34,6 +34,9 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 PROVIDERS = {
+    "team": "Команда — все подключённые ИИ отвечают параллельно, ведущий собирает общий ответ",
+    "codex": "ChatGPT (Codex) — ответы через вход в Codex CLI",
+    "ollama_cloud": "Ollama Cloud — облачная модель Ollama, запросы уходят в интернет",
     "hybrid": "Гибрид — быстрые команды и простые вопросы локально; сложные задачи через Claude",
     "ollama": "Ollama — локальная модель, данные не покидают компьютер",
     "claude": "Claude (Agent SDK) — облако Anthropic, запросы уходят в интернет",
@@ -461,8 +464,16 @@ def make_agent_backend(config) -> ClaudeAgentBackend | None:
 
 def provider_status(config) -> dict[str, Any]:
     from .gemini import DEFAULT_MODEL, KEY_ENV, api_key
+    from .ollama_cloud import DEFAULT_MODEL as CLOUD_MODEL, api_key as cloud_key
+    from .team import CodexCLI, member_status
     ok, note = ClaudeAgentBackend.available()
     return {"active": str(config.get("llm.provider", "ollama")), "options": PROVIDERS,
+            "team": {"members": member_status(config), "lead": config.get("team.lead", "auto")},
+            "codex": {"available": bool(CodexCLI.find()), "model": config.get("team.codex_model", ""),
+                      "note": "Нужны Codex CLI и вход codex login"},
+            "ollama_cloud": {"available": bool(cloud_key()),
+                             "note": "ключ найден" if cloud_key() else "нет OLLAMA_API_KEY в .env",
+                             "model": config.get("llm.ollama_cloud.model", "") or CLOUD_MODEL},
             "claude": {"available": ok, "note": note, "model": config.get("llm.claude.model", "")},
             "gemini": {"available": bool(api_key()),
                        "note": "ключ найден" if api_key() else f"нет ключа {KEY_ENV} в .env",

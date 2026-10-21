@@ -266,8 +266,11 @@ class GeminiClient:
 
 
 def make_llm(config):
-    """Клиент модели для цикла инструментов: Gemini или локальная Ollama."""
+    """Клиент цикла инструментов: Gemini, Ollama Cloud или локальная Ollama."""
     from .llm import OllamaClient
+    if str(config.get("llm.provider", "ollama")).lower() == "ollama_cloud":
+        from .ollama_cloud import from_config
+        return from_config(config)
     if str(config.get("llm.provider", "ollama")).lower() == "gemini":
         return GeminiClient(model=str(config.get("llm.gemini.model", "") or DEFAULT_MODEL),
                             fallback_model=str(config.get("llm.gemini.fallback_model", FALLBACK_MODEL) or ""),
