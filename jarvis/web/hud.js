@@ -38,7 +38,7 @@
   // ---------- соединение ----------
   function connect() {
     ws = new WebSocket(`ws://${location.host}/ws`);
-    ws.onopen = () => { setConn(true); reconnectDelay = 500; refreshStatus(); };
+    ws.onopen = () => { setConn(true); reconnectDelay = 500; refreshStatus(); loadBrief(); };
     ws.onclose = () => { setConn(false); setTimeout(connect, reconnectDelay); reconnectDelay = Math.min(reconnectDelay * 2, 8000); };
     ws.onmessage = (e) => { try { handle(JSON.parse(e.data)); } catch (err) { console.error(err); } };
   }
@@ -100,6 +100,12 @@
       case "delegate": timelineAdd("task", "Поручение агенту " + (AGENT_TEXT[ev.agent] || ev.agent), ev.text || "", "", ev.ts); break;
       case "site": renderProject(ev.project, true); break;
       case "team": renderTeam(ev.job, true); break;
+      case "memory": renderMemoryEvent(ev, true); break;
+      case "memory_saved":
+        timelineAdd("ok", "Записано в память: " + (ev.note.title || ""), [NOTE_TYPES[ev.note.type] || ev.note.type,
+          STATUS_TEXT[ev.note.status] || ev.note.status].filter(Boolean).join(" · "), "", ev.ts);
+        loadBrief();
+        break;
     }
   }
 
@@ -112,6 +118,7 @@
       : (state === "error" || state === "idle") ? (detail || "") : "";
     $("cancelBtn").hidden = !["thinking", "acting", "speaking"].includes(state);
     $("shutUpBtn").hidden = state !== "speaking";
+    if (orb) orb.setState(state);
     updateHeadline();
     eyeLevel();
   }
@@ -561,20 +568,77 @@
     } else if (Rec) $("micBtn").click();
     else $("input").focus();
   };
-  // Пока Джарвис слушает, глаз светится в такт настоящему уровню микрофона.
-  let eyeLoop = false;
-  function eyeLevel() {
-    if (uiState === "listening" && serverVoice.enabled) { if (!eyeLoop) { eyeLoop = true; pollEye(); } }
-    else $("core").style.setProperty("--lvl", "0");
+  // ---------- сфера ----------
+  // Сигнал для сферы — только настоящий: уровень микрофона, пока Джарвис слушает, и громкость
+  // звучащего голоса Silero, пока говорит (локальный голос). Сигнала нет (системный голос Windows,
+  // распознавание браузера) — сфера играет анимацию состояния, и подпись под ней говорит об этом.
+  let orb = null, sigLoop = false, sigKind = null;
+  function startOrb() {
+    const pref = store("jarvis.orb") || "auto";
+    $("orbQuality").value = pref;
+    if (window.JarvisOrb && pref !== "off") {
+      try { orb = window.JarvisOrb.create($("orbCanvas"), { quality: pref, noWebGL: /[?&]orb=canvas\b/.test(location.search) }); }
+      catch (e) { console.warn("Сфера не запустилась:", e); orb = null; }
+    }
+    $("core").classList.toggle("orb-on", !!(orb && orb.active));
   }
-  async function pollEye() {
-    if (!(uiState === "listening" && serverVoice.enabled)) { eyeLoop = false; $("core").style.setProperty("--lvl", "0"); return; }
+  function orbInfo() {
+    const i = orb ? orb.info() : null;
+    $("orbInfo").textContent = !window.JarvisOrb ? "Сфера недоступна: не загрузился orb.js."
+      : !i || i.renderer === "none" ? "Сфера выключена — показан простой глаз."
+      : `${i.renderer === "webgl" ? "WebGL" : "Canvas 2D (WebGL недоступен)"} · ${{ high: "высокое", medium: "среднее", low: "низкое", canvas: "облегчённое" }[i.quality] || i.quality} качество · ${i.points} частиц · ${i.fps} кадров/с`
+        + (i.software ? " · видеокарта не используется (программный рендер)" : "")
+        + (i.reducedMotion ? " · «уменьшить движение» в системе: сфера почти неподвижна" : "")
+        + (i.degraded.length ? " · снижено: " + i.degraded.join(", ") : "");
+  }
+  $("orbQuality").onchange = () => {
+    const q = $("orbQuality").value;
+    store("jarvis.orb", q);
+    if (!orb && q !== "off") startOrb(); else if (orb) orb.setQuality(q);
+    $("core").classList.toggle("orb-on", !!(orb && orb.active));
+    orbSource(); orbInfo();
+  };
+  function orbSource() {
+    const box = $("orbSource");
+    box.hidden = !(orb && orb.active) || !(uiState === "listening" || uiState === "speaking");
+    if (box.hidden) return;
+    box.textContent = sigKind === "mic" ? "Сфера: уровень микрофона"
+      : sigKind === "speech" ? "Сфера: громкость голоса Джарвиса"
+      : sigKind === "words" ? "Сфера: слова озвучки браузера"
+      : "Сфера: анимация состояния — сигнала звука нет";
+  }
+  function eyeLevel() {
+    if (serverVoice.enabled && (uiState === "listening" || uiState === "speaking") && !document.hidden) {
+      if (!sigLoop) { sigLoop = true; pollSignal(); }
+    } else if (!sigLoop) {
+      $("core").style.setProperty("--lvl", "0");
+      if (orb) orb.setSignal(null);
+      if (sigKind !== "words") sigKind = null;
+    }
+    orbSource();
+  }
+  async function pollSignal() {
+    const listen = uiState === "listening", talk = uiState === "speaking";
+    if (!(serverVoice.enabled && (listen || talk)) || document.hidden) {
+      sigLoop = false; sigKind = null;
+      if (orb) orb.setSignal(null);
+      $("core").style.setProperty("--lvl", "0");
+      orbSource();
+      return;
+    }
     try {
       const l = await api("/api/audio/level");
-      $("core").style.setProperty("--lvl", String(l.active && !l.muted ? Math.min(1, l.level / 0.25) : 0));
+      let v = null;
+      if (listen && l.active && !l.muted) v = Math.min(1, Math.sqrt(l.level / 0.25));
+      else if (talk && l.speech != null) v = l.speech;
+      sigKind = v == null ? null : listen ? "mic" : "speech";
+      if (orb) orb.setSignal(v);
+      $("core").style.setProperty("--lvl", String(listen && v != null ? v : 0));  // простой глаз без сферы
     } catch (e) { /* сервер перезапускается */ }
-    setTimeout(pollEye, 120);
+    orbSource();
+    setTimeout(pollSignal, 70);
   }
+  document.addEventListener("visibilitychange", eyeLevel);
 
   if (!Rec) {
     $("micBtn").disabled = true;
@@ -614,7 +678,9 @@
     const u = new SpeechSynthesisUtterance(plain(text).slice(0, 1200));
     u.lang = /[а-яё]/i.test(text) ? "ru-RU" : "en-US";
     u.onstart = () => { speaking = true; setState("speaking"); };
-    u.onend = u.onerror = () => { speaking = false; if (uiState === "speaking") setState("idle"); };
+    // Голос браузера не даёт громкость, но сообщает границы слов — сфера вздрагивает на каждом слове.
+    u.onboundary = (e) => { if (orb && e.name !== "sentence") { orb.pulse(0.7); if (sigKind !== "words") { sigKind = "words"; orbSource(); } } };
+    u.onend = u.onerror = () => { speaking = false; sigKind = null; if (uiState === "speaking") setState("idle"); };
     speechSynthesis.cancel(); speechSynthesis.speak(u);
   }
   function stopSpeech() { if (window.speechSynthesis) speechSynthesis.cancel(); if (speaking) { speaking = false; setState("idle"); } }
@@ -802,7 +868,7 @@
     if (t.dataset.tab === "memory") loadMemory();
     if (t.dataset.tab === "schedule") loadSchedules();
     if (t.dataset.tab === "settings" || t.dataset.tab === "diag") refreshStatus();
-    if (t.dataset.tab === "diag") { loadAudio(); loadAutostart(); if (!levelTimer) pollLevel(); }
+    if (t.dataset.tab === "diag") { loadAudio(); loadAutostart(); orbInfo(); if (!levelTimer) pollLevel(); }
   });
 
   // ---------- память ----------
@@ -858,8 +924,84 @@
       const al = $("actions"); al.innerHTML = "";
       (m.actions || []).forEach(a => { const li = document.createElement("li"); li.textContent = a; al.appendChild(li); });
     } catch (e) { addSystem("Не удалось загрузить память: " + e.message, true); }
+    loadBrief();
   }
   $("memRefresh").onclick = loadMemory;
+
+  // ---------- компактная панель памяти: контекст задачи, заметки, решения, шаги ----------
+  const STATUS_TEXT = { fact: "факт", assumption: "предположение", plan: "план", done: "сделано", superseded: "заменено" };
+  const NOTE_TYPES = { project: "проект", goal: "цель", task: "задача", decision: "решение", check: "проверка", note: "заметка" };
+  function noteLink(text, uri) {
+    const a = el(uri ? "a" : "span", "", text);
+    if (uri) { a.href = uri; a.title = "Открыть в Obsidian"; }
+    return a;
+  }
+  function mbFill(listId, sumId, items, render, empty, summary) {
+    const ul = $(listId); ul.innerHTML = "";
+    items.forEach(it => ul.appendChild(render(it)));
+    $(sumId).textContent = items.length ? summary(items) : empty;
+    $(listId).closest("details").classList.toggle("empty", !items.length);
+  }
+  function noteRow(n) {
+    const li = el("li");
+    if (n.status) li.appendChild(el("span", "st " + n.status, STATUS_TEXT[n.status] || n.status));
+    li.appendChild(noteLink(n.title, n.uri));
+    if (n.date) li.appendChild(el("span", "muted", " · " + n.date));
+    return li;
+  }
+  function renderMemoryEvent(ev, live) {
+    if (!ev) return;
+    const used = ev.used || [];
+    mbFill("mbUsedList", "mbUsedSum", used, (u) => {
+      const li = el("li");
+      li.appendChild(el("span", "kind " + (u.kind || ""), u.label || u.kind));
+      li.appendChild(noteLink(u.text, u.uri));
+      return li;
+    }, ev.note ? "не использовалась: " + ev.note.charAt(0).toLowerCase() + ev.note.slice(1) : "ничего подходящего в памяти",
+    (items) => {
+      const counts = {};
+      items.forEach(u => { const k = (u.label || u.kind || "").split(" · ")[0]; counts[k] = (counts[k] || 0) + 1; });
+      return `${items.length} в промпте: ` + Object.entries(counts).map(([k, n]) => n > 1 ? `${k} ×${n}` : k).join(", ");
+    });
+    mbFill("mbRelList", "mbRelSum", ev.related || [], noteRow, "по этому вопросу заметок нет",
+      (items) => items[0].title + (items.length > 1 ? ` и ещё ${items.length - 1}` : ""));
+    $("mbNote").textContent = ev.query ? "«" + (ev.query.length > 48 ? ev.query.slice(0, 48) + "…" : ev.query) + "»" : "";
+    $("mbNote").title = ev.query || "";
+    if (live) timelineAdd("route", "Память", used.length ? $("mbUsedSum").textContent : "в промпт ничего не добавлено", "", ev.ts);
+  }
+  function renderBrief(b) {
+    const v = b.vault || {};
+    $("mbOpen").hidden = !v.uri; if (v.uri) $("mbOpen").href = v.uri;
+    $("vaultOpen").hidden = !v.uri; if (v.uri) $("vaultOpen").href = v.uri;
+    mbFill("mbDecList", "mbDecSum", b.decisions || [], noteRow, v.enabled ? "решений пока нет" : "заметки Obsidian выключены",
+      (items) => items[0].title + (items.length > 1 ? ` и ещё ${items.length - 1}` : ""));
+    mbFill("mbStepsList", "mbStepsSum", b.steps || [], noteRow, v.enabled ? "запланированных шагов нет" : "—",
+      (items) => items[0].title + (items.length > 1 ? ` и ещё ${items.length - 1}` : ""));
+    if (b.last) renderMemoryEvent(b.last, false);
+    const ul = $("vaultInfo"); ul.innerHTML = "";
+    const row = (ok, text) => { const li = el("li", ok ? "ok" : "warn"); li.append(el("span", "mk", ok ? "✓" : "!"), el("span", "", text)); ul.appendChild(li); };
+    if (!v.enabled) row(false, "Заметки Obsidian выключены (config.toml → [memory.vault] enabled).");
+    else {
+      row(!v.error, v.error ? "Папка недоступна: " + v.error : "Папка: " + v.path);
+      const c = v.counts || {};
+      row(true, ["project", "goal", "task", "decision", "check", "note"].filter(k => c[k])
+        .map(k => `${NOTE_TYPES[k]}: ${c[k]}`).join(" · ") || "Заметок пока нет — скажите «запиши решение: …».");
+    }
+  }
+  async function loadBrief() {
+    try { renderBrief(await api("/api/memory/brief")); } catch (e) { /* сервер перезапускается */ }
+  }
+  $("vaultSync").onclick = async () => {
+    $("vaultSync").disabled = true;
+    try {
+      const r = await fetch("/api/memory/vault/sync", { method: "POST", headers: { "Content-Type": "application/json" } });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error(d.error || (d.vault && d.vault.error) || String(r.status));
+      addSystem(`Указатель памяти пересобран: заметок ${d.stats.notes}, обновлено файлов ${d.stats.mirror + d.stats.indexes}.`);
+    } catch (e) { addSystem("Указатель не пересобран: " + e.message, true); }
+    $("vaultSync").disabled = false;
+    loadBrief();
+  };
   $("memImportFile").onchange = async (e) => {
     const file = e.target.files[0];
     e.target.value = "";
@@ -1141,7 +1283,10 @@
   tick();
   setInterval(tick, 5000);
   addSystem("Например: «Открой YouTube и найди видео про локальных ИИ-ассистентов» или «Найди в интернете, что такое MCP, и сравни два источника».");
+  startOrb();
   setState("idle");
+  // Для проверок в браузере (scripts/hud_smoke.py): события подаются тем же путём, что из WebSocket.
+  window.JarvisHUD = { handle, get orb() { return orb; } };
   connect();
   pollSystem();
 })();

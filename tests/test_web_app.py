@@ -388,3 +388,42 @@ def test_tray_follows_runtime_and_quits(server, monkeypatch):
     assert icon.state == "acting"
     next(i for i in icon._icon.menu.items if getattr(i, "text", "") == "Выход").action()
     assert runtime.exit_code == 0 and stopped == [1]
+
+
+def test_memory_brief_and_vault_sync(server):
+    client, app, _ = server
+    assert app.vault is not None
+    r = app.vault.save("decision", "Сфера на WebGL", "Своя реализация.", project="JARVIS HUD", topic="сфера")
+    assert r["ok"]
+    app.vault.save("task", "Проверить HUD на Windows", "run_web.bat")
+    brief = client.get("/api/memory/brief").json()
+    assert brief["vault"]["enabled"] and brief["vault"]["uri"].startswith("obsidian://open?path=")
+    assert [d["title"] for d in brief["decisions"]] == ["Сфера на WebGL"]
+    assert [s["title"] for s in brief["steps"]] == ["Проверить HUD на Windows"]
+    sync = client.post("/api/memory/vault/sync", headers=ORIGIN).json()
+    assert sync["ok"] and sync["stats"]["notes"] == 3  # решение, задача и созданный для них проект
+    assert client.post("/api/memory/vault/sync", headers={"origin": "http://evil.example"}).status_code == 403
+
+
+def test_memory_event_reaches_hud(server):
+    client, app, _ = server
+    app.memory.add_fact("Отвечай коротко", "preference")
+    with client.websocket_connect(WS, headers=ORIGIN) as ws:
+        ws.receive_json()  # hello
+        ws.send_json({"type": "message", "text": "привет, как дела у проекта"})
+        ev, _ = receive_until(ws, "memory")
+        assert ev["used_memory"] and {"kind": "preference", "label": "предпочтение", "text": "Отвечай коротко"} in ev["used"]
+        receive_until(ws, "reply")
+    assert client.get("/api/memory/brief").json()["last"]["query"] == "привет, как дела у проекта"
+
+
+def test_audio_level_reports_speech_signal_or_none(server):
+    client, app, _ = server
+    level = client.get("/api/audio/level").json()
+    assert level == {"active": False, "muted": False, "level": 0.0, "speech": None}
+    app.voice_active = True
+    app.speaker.speech_level = lambda: 0.42
+    assert client.get("/api/audio/level").json()["speech"] == 0.42
+    app.speaker.speech_level = lambda: None  # системный голос: громкости нет
+    assert client.get("/api/audio/level").json()["speech"] is None
+    app.voice_active = False

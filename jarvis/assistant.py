@@ -68,6 +68,10 @@ COMPOSE_PROMPT = ("Ты пишешь готовый текст от имени �
                   "без вступления и пояснений. Пиши естественно на языке, который подходит запросу. "
                   "Для обычных писем и сообщений используй вежливый, живой стиль и до 80 слов, "
                   "если длина не указана.")
+# Когда сохранять итоги в заметки Obsidian (инструмент есть, только если включено хранилище).
+MEMORY_NOTE_RULE = ("\nСущественные итоги сохраняй инструментом save_memory_note: принятое пользователем решение, "
+                    "результат проверки, договорённый следующий шаг или цель (status: fact — проверено, "
+                    "assumption — не проверено, plan — ещё не сделано, done — сделано). Обычные ответы не сохраняй.")
 PROMPT_REQUEST_RE = re.compile(r"\b(?:промпт|prompt|инструкци\w* для (?:chatgpt|чатгпт|claude|ии|нейросет\w*)|"
                                r"запрос для (?:chatgpt|чатгпт|claude|ии|нейросет\w*))\b", re.I)
 
@@ -267,6 +271,11 @@ class Assistant:
         self.sites: Any = None
         # Команда ИИ («спроси всех: …», см. team.py).
         self.team: Any = None
+        # Заметки Obsidian (vault.py): проекты, решения, проверки, следующие шаги.
+        self.vault: Any = None
+        # Память, использованная в последней задаче (событие «memory» для HUD), и кэш блока промпта.
+        self.last_memory: dict | None = None
+        self._memory_cache: tuple[str, str] | None = None
         # Навыки (skills/*/SKILL.md) и навык, действующий в текущей задаче.
         self.skills: Any = None
         self.active_skill: Any = None
@@ -378,10 +387,53 @@ class Assistant:
         return bool(m and FIND_QUESTION_RE.match(m.group("b").strip()))
 
     def _ask_model(self, text: str, on_sentence: Callable[[str], bool] | None = None) -> Reply:
+        try:
+            return self._ask_model_inner(text, on_sentence)
+        finally:
+            if self.vault is not None:  # итоги задачи и изменения памяти → зеркало и указатели Obsidian
+                self.vault.sync_later()
+
+    def memory_turn(self, query: str, used: bool = True) -> None:
+        """Перед задачей: найти в памяти нужный контекст (SQLite и заметки Obsidian) и показать в HUD,
+        что именно получила модель. used=False — путь без памяти в промпте (команда ИИ)."""
+        prefs, found = [], []
+        try:
+            if self.vault is not None:
+                self.vault.refresh()  # правки, сделанные в Obsidian, — до поиска
+            if used:
+                prefs, found = self.memory.context_items(query)
+            related = self.vault.related(query) if self.vault is not None else []
+        except Exception:  # noqa: BLE001 — память не должна мешать ответу
+            log.exception("Поиск в памяти")
+            related = []
+        self._memory_cache = (query, self.memory.format_context(prefs, found)) if used else None
+        event = {"type": "memory", "query": query[:200], "used_memory": used,
+                 "used": [{"kind": "preference", "label": "предпочтение", "text": p} for p in prefs]
+                 + [{"kind": m["kind"], "label": self.memory.item_label(m), "text": m["text"],
+                     **({"path": m["path"], "status": m.get("status", ""),
+                         "uri": self.vault.obsidian_uri(m["path"])} if m.get("path") and self.vault else {})}
+                    for m in found],
+                 "related": related}
+        if not used:
+            event["note"] = "Команда ИИ получает вопрос и недавний диалог, без долговременной памяти."
+        self.last_memory = event
+        self.emit(event)
+
+    def memory_context(self, query: str) -> str:
+        """Блок памяти для промпта — тот же, что показан в HUD для этой задачи."""
+        cached = self._memory_cache
+        return cached[1] if cached is not None and cached[0] == query else self.memory.context_for(query)
+
+    def memory_rule(self) -> str:
+        return MEMORY_NOTE_RULE if "save_memory_note" in self.registry.names() else ""
+
+    def _ask_model_inner(self, text: str, on_sentence: Callable[[str], bool] | None = None) -> Reply:
         provider = str(self.config.get("llm.provider", "ollama")).lower()
         if provider in ("team", "codex") and self.team is not None and not self.unattended and self.active_skill is None:
+            self.memory_turn(text, used=False)
             return self._team_command(text, on_sentence, force=True,
                                       member_keys={"codex"} if provider == "codex" else None)
+        self.memory_turn(text)
         if self.agent_backend is not None:
             # Гибрид: локальная Qwen отвечает на обычные короткие вопросы; Claude
             # получает многошаговые задачи и запросы, где важна актуальная информация.
@@ -897,8 +949,8 @@ class Assistant:
         return None
 
     def _system_prompt(self, query: str = "") -> str:
-        return SYSTEM_PROMPT.format(name=self.name, facts=self.memory.context_for(query),
-                                    now=now_text()) + self.skill_prompt()
+        return SYSTEM_PROMPT.format(name=self.name, facts=self.memory_context(query),
+                                    now=now_text()) + self.memory_rule() + self.skill_prompt()
 
     def remember_task(self, request: str, answer: str, tools: list[str]) -> None:
         """Итог многошаговой задачи — в память (видно и удаляется во вкладке «Память»)."""

@@ -62,11 +62,13 @@
         <circle class="iris-seam" cx="160" cy="160" r="94"/>
       </svg>
       <span class="eye-core" aria-hidden="true"></span>
+      <canvas class="orb" id="orbCanvas" aria-hidden="true"></canvas>
     </button>
     <div class="state" id="statePill" data-state="idle">
       <span class="state-text" id="stateText">Готов</span>
       <span class="state-detail" id="stateDetail"></span>
     </div>
+    <p class="orb-source" id="orbSource" hidden></p>
     <p class="mic-hint" id="micHint"></p>
 
     <div class="decision" id="confirmBar" hidden role="alertdialog" aria-labelledby="confirmTitle" aria-describedby="confirmText">
@@ -106,6 +108,29 @@
   </section>
 
   <aside class="side-col" aria-label="Подробности">
+    <section class="mem-brief" id="memBrief" aria-label="Память: контекст последней задачи">
+      <div class="mb-head">
+        <span class="mb-title">Память</span>
+        <span class="mb-note" id="mbNote"></span>
+        <a class="link-btn" id="mbOpen" href="#" hidden title="Открыть указатель памяти в Obsidian">Obsidian</a>
+      </div>
+      <details class="mb-row" id="mbUsed">
+        <summary><span class="mb-k">Контекст</span><span class="mb-v" id="mbUsedSum">появится после первого вопроса модели</span></summary>
+        <ul class="mb-list" id="mbUsedList"></ul>
+      </details>
+      <details class="mb-row" id="mbRel">
+        <summary><span class="mb-k">Заметки</span><span class="mb-v" id="mbRelSum">—</span></summary>
+        <ul class="mb-list" id="mbRelList"></ul>
+      </details>
+      <details class="mb-row" id="mbDec">
+        <summary><span class="mb-k">Решения</span><span class="mb-v" id="mbDecSum">—</span></summary>
+        <ul class="mb-list" id="mbDecList"></ul>
+      </details>
+      <details class="mb-row" id="mbSteps">
+        <summary><span class="mb-k">Шаги</span><span class="mb-v" id="mbStepsSum">—</span></summary>
+        <ul class="mb-list" id="mbStepsList"></ul>
+      </details>
+    </section>
     <nav class="tabs" role="tablist">
       <button class="tab active" role="tab" aria-selected="true" aria-controls="tab-timeline" data-tab="timeline">Шаги</button>
       <button class="tab" role="tab" aria-selected="false" aria-controls="tab-projects" data-tab="projects">Проекты</button>
@@ -152,6 +177,15 @@
       <h3>Итоги задач</h3><ul class="mem-list" id="tasks"></ul>
       <h3>Напоминания</h3><ul class="mem-list" id="reminders"></ul>
       <h3>Журнал действий</h3><ul class="log-list" id="actions"></ul>
+      <h3>Заметки Obsidian</h3>
+      <ul class="diag-list" id="vaultInfo"></ul>
+      <div class="row">
+        <a class="btn" id="vaultOpen" href="#" hidden>Открыть в Obsidian</a>
+        <button class="btn" id="vaultSync" type="button">Пересобрать указатель</button>
+      </div>
+      <p class="note">Проекты, цели, задачи, решения и проверки — файлы Markdown в этой папке (их можно править в Obsidian).
+        Факты, предпочтения и итоги задач хранит memory.db, в папке — их копия только для чтения.
+        Скажите «запиши решение: …», «следующий шаг — …» или «запиши результат проверки: …».</p>
       <h3>Перенос памяти</h3>
       <div class="row">
         <a class="btn" id="memExport" href="/api/memory/export" download>Скачать копию</a>
@@ -200,6 +234,18 @@
       <label class="toggle"><input type="checkbox" id="autostartToggle" disabled> Запускать Джарвиса при входе в Windows</label>
       <p class="note" id="autostartNote">Джарвис запустится с голосом и значком в трее; HUD открывается щелчком по значку.</p>
 
+      <h3>Сфера</h3>
+      <div class="inline-form">
+        <select id="orbQuality" aria-label="Качество графики сферы">
+          <option value="auto">Графика: авто (снижается, если медленно)</option>
+          <option value="high">Графика: высокая</option>
+          <option value="medium">Графика: средняя</option>
+          <option value="low">Графика: низкая</option>
+          <option value="off">Без сферы (простой глаз)</option>
+        </select>
+      </div>
+      <p class="note" id="orbInfo"></p>
+
       <h3>Звук</h3>
       <div class="audio-box">
         <label class="note" for="micSelect">Микрофон</label>
@@ -238,6 +284,7 @@
   </div>
 </dialog>
 <script src="/static/markdown.js"></script>
+<script src="/static/orb.js"></script>
 <script src="/static/hud.js"></script>
 </body>
 </html>

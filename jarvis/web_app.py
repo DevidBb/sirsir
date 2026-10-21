@@ -81,6 +81,11 @@ class Runtime:
         self.task_id = 0
         app.assistant.on_event = self._on_assistant_event
         app.observer = self._on_voice_event
+        vault = getattr(app, "vault", None)
+        if vault is not None:
+            # Сохранённая заметка (решение, проверка, шаг) — сразу в панель памяти HUD.
+            vault.on_saved = lambda note: self.hub.publish({"type": "memory_saved", "note": note})
+            threading.Thread(target=vault.sync, name="vault-sync", daemon=True).start()
         self.voice_task: int | None = None
         # Обновления: проверка в фоне, кнопка «Обновить и перезапустить» (только под jarvis.supervisor).
         self.update_checker: Any = None
@@ -353,6 +358,37 @@ def create_app(runtime: Runtime, port: int):
                              "tasks": mem.list_tasks(),
                              "settings": mem.all_settings(), "actions": _tail_actions(app_core.config)})
 
+    def vault_changed() -> None:
+        if getattr(app_core, "vault", None) is not None:
+            app_core.vault.sync_later()
+
+    def memory_brief() -> dict[str, Any]:
+        """Компактная панель памяти: что использовано в последней задаче, связанные заметки,
+        последние решения и следующие шаги."""
+        v = getattr(app_core, "vault", None)
+        out: dict[str, Any] = {"last": app_core.assistant.last_memory, "vault": {"enabled": False},
+                               "decisions": [], "steps": [], "checks": []}
+        if v is not None:
+            v.refresh()
+            out.update(vault=v.status(), decisions=v.recent("decision", 5), steps=v.next_steps(5),
+                       checks=v.recent("check", 3))
+        return out
+
+    async def memory_brief_api(request: Request):
+        if (resp := guard(request)) is not None:
+            return resp
+        return JSONResponse(await asyncio.to_thread(memory_brief))
+
+    async def vault_sync(request: Request):
+        if (resp := guard(request)) is not None:
+            return resp
+        v = getattr(app_core, "vault", None)
+        if v is None:
+            return JSONResponse({"ok": False, "error": "Хранилище Obsidian выключено ([memory.vault] enabled)"},
+                                status_code=400)
+        stats = await asyncio.to_thread(v.sync)
+        return JSONResponse({"ok": "error" not in stats, "stats": stats, "vault": v.status()})
+
     async def memory_export(request: Request):
         if (resp := guard(request)) is not None:
             return resp
@@ -375,6 +411,7 @@ def create_app(runtime: Runtime, port: int):
         except (ValueError, UnicodeDecodeError) as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
         log.info("Импорт памяти: %s", stats)
+        vault_changed()
         return JSONResponse({"ok": True, "stats": stats, "text": summary(stats)})
 
     async def memory_item(request: Request):
@@ -394,11 +431,13 @@ def create_app(runtime: Runtime, port: int):
                 ok = mem.modify("UPDATE reminders SET done = 1 WHERE id = ?", (item_id,)) > 0
             else:
                 return JSONResponse({"error": "unknown kind"}, status_code=404)
+            vault_changed()
             return JSONResponse({"ok": ok})
         body = await request.json()
         if kind != "facts":
             return JSONResponse({"error": "только факты можно редактировать"}, status_code=400)
         ok = mem.update_fact(item_id, str(body.get("text", "")), body.get("kind"))
+        vault_changed()
         return JSONResponse({"ok": ok, "error": None if ok else
                              "пусто или похоже на секрет (пароль, токен) — не сохраняю"})
 
@@ -407,6 +446,7 @@ def create_app(runtime: Runtime, port: int):
             return resp
         body = await request.json()
         ok = app_core.memory.add_fact(str(body.get("text", "")), str(body.get("kind", "fact")))
+        vault_changed()
         return JSONResponse({"ok": ok, "error": None if ok else
                              "пусто, уже есть или похоже на секрет — не сохраняю"})
 
@@ -489,8 +529,12 @@ def create_app(runtime: Runtime, port: int):
         if (resp := guard(request)) is not None:
             return resp
         mic = app_core.mic if app_core.voice_active else None
+        # Уровень речи — огибающая звука, который сейчас играет Silero; None — сигнала нет
+        # (системный голос Windows), тогда сфера показывает анимацию состояния.
+        speech = app_core.speaker.speech_level() if app_core.voice_active else None
         return JSONResponse({"active": mic is not None, "muted": bool(mic and mic.muted),
-                             "level": round(float(getattr(mic, "level", 0.0)), 4) if mic else 0.0})
+                             "level": round(float(getattr(mic, "level", 0.0)), 4) if mic else 0.0,
+                             "speech": None if speech is None else round(float(speech), 4)})
 
     async def audio_device(request: Request):
         if (resp := guard(request)) is not None:
@@ -666,6 +710,8 @@ def create_app(runtime: Runtime, port: int):
         Route("/api/memory", memory),
         Route("/api/memory/facts", add_fact, methods=["POST"]),
         Route("/api/memory/export", memory_export),
+        Route("/api/memory/brief", memory_brief_api),
+        Route("/api/memory/vault/sync", vault_sync, methods=["POST"]),
         Route("/api/memory/import", memory_import, methods=["POST"]),
         Route("/api/memory/{kind}/{item_id:int}", memory_item, methods=["DELETE", "PUT"]),
         Route("/api/settings", settings, methods=["POST"]),

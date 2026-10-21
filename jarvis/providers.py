@@ -309,12 +309,13 @@ class ClaudeAgentBackend:
         # Только не зависящая от запроса память (предпочтения, факты), чтобы промпт не менялся
         # от хода к ходу; найденное по запросу добавляется к самому запросу (_memory_note).
         return (AGENT_PROMPT.format(name=assistant.name, os=os_name(), facts=assistant.memory.context_for(""))
-                + assistant.skill_prompt() + (DELEGATE_NOTE.format(roles=", ".join(agents)) if agents else ""))
+                + assistant.memory_rule() + assistant.skill_prompt()
+                + (DELEGATE_NOTE.format(roles=", ".join(agents)) if agents else ""))
 
     @staticmethod
     def _memory_note(assistant: "Assistant", query: str) -> str:
         stable = set(assistant.memory.context_for("").splitlines())
-        extra = [line for line in assistant.memory.context_for(query).splitlines()
+        extra = [line for line in assistant.memory_context(query).splitlines()
                  if line.startswith("- ") and line not in stable]
         return ("Из памяти по этому запросу (для справки):\n" + "\n".join(extra) + "\n\n") if extra else ""
 

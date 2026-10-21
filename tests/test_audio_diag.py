@@ -145,7 +145,7 @@ def test_audio_api_without_voice(client):
     c, app = client
     info = c.get("/api/audio").json()
     assert len(info["devices"]) == 3 and info["voice"]["enabled"] is False
-    assert c.get("/api/audio/level").json() == {"active": False, "muted": False, "level": 0.0}
+    assert c.get("/api/audio/level").json() == {"active": False, "muted": False, "level": 0.0, "speech": None}
     assert not c.post("/api/audio/speak", json={}).json()["ok"]
     r = c.post("/api/audio/device", json={"spec": "Микрофон (USB Audio)|Windows WASAPI"}).json()
     assert r["ok"] and not r["applied"]

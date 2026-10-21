@@ -169,6 +169,19 @@ EN_WEB_RE = re.compile(r"^(?:google|search the web for|search the internet for|s
 # «Запомни, что я люблю короткие ответы», «remember that my name is David».
 REMEMBER_RE = re.compile(r"^\s*(?:(?:привет|джарвис|слушай)[\s,!.]+)*(?:запомни|запомните|запиши в память|"
                          r"remember)[\s,:]+(?:(?:что|that)[\s,:]+)?(?P<f>\S.*)$", re.I | re.S)
+# «Запиши решение: …», «следующий шаг — …», «запиши результат проверки: …» — в заметки Obsidian
+# (save_memory_note). Тип записи → (type, status).
+_NOTE_KINDS = r"(?P<k>решение|следующий шаг|следующим шагом|задачу|результат проверки|проверку|цель)"
+MEMORY_NOTE_RE = re.compile(  # с глаголом: «запиши решение …»
+    r"^\s*(?:(?:джарвис|слушай)[\s,!.]+)*(?:запиши|запомни|сохрани|зафиксируй|добавь)(?: мне)?\s+" + _NOTE_KINDS
+    + r"(?:\s+(?:что|о том что))?[\s,:—–-]+(?P<t>\S.*)$", re.I | re.S)
+MEMORY_NOTE_BARE_RE = re.compile(  # без глагола — только с двоеточием или тире: «следующий шаг — …»
+    r"^\s*(?:(?:джарвис|слушай)[\s,!.]+)*(?P<k>решение|следующий шаг|результат проверки|цель)\s*[:—–-]\s*"
+    r"(?P<t>\S.*)$", re.I | re.S)
+MEMORY_NOTE_KINDS = {"решение": ("decision", "fact"), "следующий шаг": ("task", "plan"),
+                     "следующим шагом": ("task", "plan"), "задачу": ("task", "plan"),
+                     "результат проверки": ("check", "fact"), "проверку": ("check", "fact"),
+                     "цель": ("goal", "plan")}
 PREFERENCE_RE = re.compile(r"\b(?:предпочита|люблю|не люблю|нравится|не нравится|удобнее|хочу чтобы|"
                            r"всегда|никогда|обычно|отвечай|говори|пиши|prefer|always|never|i like|i don)", re.I)
 # «Посмотри на экран и скажи, что за ошибка», «что у меня на экране», «look at my screen».
@@ -273,6 +286,16 @@ class IntentMatcher:
         m = FILE_SEARCH_RE.match(norm)
         if m and not FILE_CONTENT_RE.match(m.group("q")):
             return Intent("search_files", {"query": m.group("q")})
+        m = MEMORY_NOTE_RE.match(text) or MEMORY_NOTE_BARE_RE.match(text)
+        if m:
+            kind, status = MEMORY_NOTE_KINDS[m.group("k").lower()]
+            body = m.group("t").strip().rstrip(".!")
+            body = body[:1].upper() + body[1:]
+            title = re.split(r"[.;!?](?=\s|$)|\s[—–-]\s", body, maxsplit=1)[0].strip()
+            words = title.split()
+            title = " ".join(words[:10]) + ("…" if len(words) > 10 else "")
+            return Intent("save_memory_note", {"type": kind, "title": title, "text": body, "status": status,
+                                               "source": "голосом или в чате HUD"})
         m = REMEMBER_RE.match(text)
         if m and not norm.startswith(("запомни где", "запомни когда")):
             fact = m.group("f").strip().rstrip(".!")

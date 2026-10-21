@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
+import time
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -109,6 +110,9 @@ class SileroBackend:
         self.volume = 1.0
         self.speed = 1.0
         self._model = None
+        # Огибающая фразы, которая сейчас звучит: (начало по time.monotonic, длина кадра в с, уровни 0..1).
+        # По ней HUD двигает сферу в такт настоящему голосу.
+        self.playing: tuple[float, float, list[float]] | None = None
         # v5 различает омографы («з+амок/зам+ок»); v4 таких параметров не знает.
         self._homographs = True
 
@@ -160,15 +164,50 @@ class SileroBackend:
         import sounddevice as sd  # type: ignore
         audio = self.synthesize(sentence)
         if audio is not None and audio.size:
+            envelope = speech_envelope(audio, self.SAMPLE_RATE)
             sd.play(audio, self.SAMPLE_RATE)
-            sd.wait()
+            try:  # звук выходит из колонок с задержкой буфера — огибающая сдвигается так же
+                delay = float(sd.get_stream().latency)
+            except Exception:
+                delay = 0.0
+            self.playing = (time.monotonic() + delay, ENVELOPE_FRAME, envelope)
+            try:
+                sd.wait()
+            finally:
+                self.playing = None
+
+    def level(self) -> float:
+        """Уровень звучащей сейчас речи (0..1) по огибающей; 0 — пауза между фразами."""
+        playing = self.playing
+        if playing is None:
+            return 0.0
+        start, frame, env = playing
+        i = int((time.monotonic() - start) // frame)
+        return env[i] if 0 <= i < len(env) else 0.0
 
     def stop(self) -> None:
+        self.playing = None
         try:
             import sounddevice as sd  # type: ignore
             sd.stop()
         except Exception:
             pass
+
+
+ENVELOPE_FRAME = 0.02  # с: 50 значений в секунду — чаще HUD всё равно не опрашивает
+
+
+def speech_envelope(audio, sample_rate: int, frame: float = ENVELOPE_FRAME) -> list[float]:
+    """Громкость по кадрам (RMS), 0..1 относительно громких мест этой же фразы (95-й процентиль),
+    поэтому не зависит от настройки громкости; тишина и паузы остаются около нуля."""
+    import numpy as np
+    n = max(1, int(sample_rate * frame))
+    usable = len(audio) // n * n
+    if usable == 0:
+        return []
+    rms = np.sqrt(np.mean(np.square(audio[:usable].reshape(-1, n), dtype=np.float64), axis=1))
+    ref = max(float(np.percentile(rms, 95)), 0.02)
+    return [round(float(x), 3) for x in np.clip(rms / ref, 0.0, 1.0)]
 
 
 def _change_speed(audio, speed: float):
@@ -263,6 +302,11 @@ class Speaker:
         self._interrupt.set()
         if self.backend is not None:
             self.backend.stop()
+
+    def speech_level(self) -> float | None:
+        """Уровень звучащей речи 0..1 или None, если движок его не даёт (системный голос Windows)."""
+        level = getattr(self.backend, "level", None)
+        return level() if callable(level) else None
 
     def say(self, text: str) -> None:
         if not text:

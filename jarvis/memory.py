@@ -46,6 +46,26 @@ CREATE TABLE IF NOT EXISTS task_log (
 );
 """
 
+# Индекс заметок Obsidian (см. vault.py). Это кэш файлов, а не данные: файлы — источник истины,
+# индекс пересобирается из них и вручную не правится.
+CREATE_VAULT = """
+CREATE TABLE IF NOT EXISTS vault_notes (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    path    TEXT NOT NULL UNIQUE,
+    title   TEXT NOT NULL,
+    type    TEXT NOT NULL DEFAULT 'note',
+    status  TEXT NOT NULL DEFAULT '',
+    project TEXT NOT NULL DEFAULT '',
+    topic   TEXT NOT NULL DEFAULT '',
+    date    TEXT NOT NULL DEFAULT '',
+    updated TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '',
+    body    TEXT NOT NULL DEFAULT '',
+    mtime   REAL NOT NULL DEFAULT 0,
+    size    INTEGER NOT NULL DEFAULT 0
+);
+"""
+
 # Полнотекстовый индекс по фактам, предпочтениям, заметкам и итогам задач.
 # Поддерживается триггерами SQLite — модули, которые пишут в эти таблицы, о нём не знают.
 FTS_SCHEMA = """
@@ -66,9 +86,22 @@ CREATE TRIGGER IF NOT EXISTS tasks_ai AFTER INSERT ON task_log BEGIN
     INSERT INTO mem_fts(text, kind, ref) VALUES (new.request || ' — ' || new.result, 'task', new.id); END;
 CREATE TRIGGER IF NOT EXISTS tasks_ad AFTER DELETE ON task_log BEGIN
     DELETE FROM mem_fts WHERE kind = 'task' AND ref = old.id; END;
+CREATE TRIGGER IF NOT EXISTS vault_ai AFTER INSERT ON vault_notes BEGIN
+    INSERT INTO mem_fts(text, kind, ref) VALUES (new.title || ' — ' || new.summary || ' ' || new.body, 'vault', new.id); END;
+CREATE TRIGGER IF NOT EXISTS vault_ad AFTER DELETE ON vault_notes BEGIN
+    DELETE FROM mem_fts WHERE kind = 'vault' AND ref = old.id; END;
+CREATE TRIGGER IF NOT EXISTS vault_au AFTER UPDATE ON vault_notes BEGIN
+    DELETE FROM mem_fts WHERE kind = 'vault' AND ref = old.id;
+    INSERT INTO mem_fts(text, kind, ref) VALUES (new.title || ' — ' || new.summary || ' ' || new.body, 'vault', new.id); END;
 """
 FACT_KINDS = ("fact", "preference")
-KIND_TITLES = {"preference": "предпочтение", "fact": "факт", "note": "заметка", "task": "задача"}
+KIND_TITLES = {"preference": "предпочтение", "fact": "факт", "note": "заметка", "task": "задача",
+               "vault": "заметка Obsidian"}
+# Заметки Obsidian: тип (frontmatter type) и статус (status) — подписи для промпта и HUD.
+VAULT_TYPE_TITLES = {"project": "проект", "goal": "цель", "task": "задача", "decision": "решение",
+                     "check": "проверка", "note": "заметка"}
+STATUS_TITLES = {"fact": "факт", "assumption": "предположение", "plan": "план", "done": "сделано",
+                 "superseded": "заменено"}
 MAX_TASKS = 500
 # До стольких фактов они все идут в промпт; больше — только найденные по запросу.
 SMALL_MEMORY = 15
@@ -104,6 +137,7 @@ class Memory:
         if "kind" not in cols:
             self._db.execute("ALTER TABLE facts ADD COLUMN kind TEXT NOT NULL DEFAULT 'fact'")
         self._db.executescript(CREATE_TASKS)
+        self._db.executescript(CREATE_VAULT)
         try:
             self._db.executescript(FTS_SCHEMA)
             self.fts = True
@@ -155,12 +189,22 @@ class Memory:
         return {k: json.loads(v) for k, v in rows}
 
     # --- факты ---
+    @staticmethod
+    def _norm(text: str) -> str:
+        """Текст без регистра, «ё» и знаков препинания — для поиска повторов."""
+        import re
+        return " ".join(re.findall(r"\w+", text.lower().replace("ё", "е")))
+
     def add_fact(self, text: str, kind: str = "fact") -> bool:
         text = " ".join(text.split())[:300]
         if not text or looks_secret(text):
             return False
         kind = kind if kind in FACT_KINDS else "fact"
+        norm = self._norm(text)
         with self._lock:
+            # Повтор с другим регистром или знаками («Меня зовут Давид.») — не новая запись.
+            if any(self._norm(r[0]) == norm for r in self._db.execute("SELECT text FROM facts")):
+                return False
             cur = self._db.execute("INSERT OR IGNORE INTO facts(text, created_at, kind) VALUES(?, ?, ?)",
                                    (text, time.time(), kind))
             # Ограничиваем размер памяти: удаляем самые старые факты.
@@ -237,33 +281,92 @@ class Memory:
                                 "ORDER BY bm25(mem_fts) LIMIT ?", (match, limit * 3))
         else:
             like = " OR ".join("text LIKE ?" for _ in terms)
+            vlike = " OR ".join("(title || ' ' || summary || ' ' || body) LIKE ?" for _ in terms)
             rows = self.execute(
                 f"SELECT kind, id, text FROM facts WHERE {like} UNION ALL "
-                f"SELECT 'note', id, text FROM notes WHERE {like} LIMIT ?",
-                tuple(f"%{t}%" for t in terms) * 2 + (limit * 3,))
-        out = [{"kind": k, "id": int(ref), "text": text, "title": KIND_TITLES.get(k, k)}
-               for k, ref, text in rows if kinds is None or k in kinds]
+                f"SELECT 'note', id, text FROM notes WHERE {like} UNION ALL "
+                f"SELECT 'vault', id, title FROM vault_notes WHERE {vlike} LIMIT ?",
+                tuple(f"%{t}%" for t in terms) * 3 + (limit * 3,))
+        out = []
+        for k, ref, text in rows:
+            if kinds is not None and k not in kinds:
+                continue
+            item = {"kind": k, "id": int(ref), "text": text, "title": KIND_TITLES.get(k, k)}
+            if k == "vault":
+                note = self.vault_note(int(ref))
+                if note is None:
+                    continue
+                item.update(text=note["title"] + (": " + note["summary"] if note["summary"] else ""),
+                            title=VAULT_TYPE_TITLES.get(note["type"], "заметка"),
+                            path=note["path"], type=note["type"], status=note["status"], date=note["date"],
+                            project=note["project"])
+            out.append(item)
         return out[:limit]
 
-    def context_for(self, query: str, limit: int = 6) -> str:
-        """Блок для системного промпта: предпочтения всегда, остальное — только относящееся к запросу."""
+    # --- индекс заметок Obsidian (кэш файлов хранилища, см. vault.py) ---
+    VAULT_FIELDS = ("path", "title", "type", "status", "project", "topic", "date", "updated", "summary",
+                    "body", "mtime", "size")
+
+    def vault_note(self, note_id: int) -> dict[str, Any] | None:
+        rows = self.execute("SELECT id, " + ", ".join(self.VAULT_FIELDS) + " FROM vault_notes WHERE id = ?",
+                            (note_id,))
+        return dict(zip(("id",) + self.VAULT_FIELDS, rows[0])) if rows else None
+
+    def vault_notes(self, where: str = "", params: tuple = (), order: str = "path", limit: int = 10_000
+                    ) -> list[dict[str, Any]]:
+        rows = self.execute("SELECT id, " + ", ".join(self.VAULT_FIELDS) + " FROM vault_notes"
+                            + (f" WHERE {where}" if where else "") + f" ORDER BY {order} LIMIT ?",
+                            params + (limit,))
+        return [dict(zip(("id",) + self.VAULT_FIELDS, r)) for r in rows]
+
+    def upsert_vault_note(self, note: dict[str, Any]) -> None:
+        values = tuple(note.get(f, "" if f not in ("mtime", "size") else 0) for f in self.VAULT_FIELDS)
+        cols = ", ".join(self.VAULT_FIELDS)
+        updates = ", ".join(f"{f} = excluded.{f}" for f in self.VAULT_FIELDS[1:])
+        self.modify(f"INSERT INTO vault_notes({cols}) VALUES({', '.join('?' * len(values))}) "
+                    f"ON CONFLICT(path) DO UPDATE SET {updates}", values)
+
+    def delete_vault_note(self, path: str) -> None:
+        self.modify("DELETE FROM vault_notes WHERE path = ?", (path,))
+
+    def context_items(self, query: str, limit: int = 6) -> tuple[list[str], list[dict[str, Any]]]:
+        """Что пойдёт в промпт: предпочтения всегда, остальное — относящееся к запросу.
+        Заменённые решения (status: superseded) не подсказываются — только актуальные."""
         prefs = self.preferences()
-        facts = self.execute("SELECT text FROM facts WHERE kind = 'fact' ORDER BY id DESC LIMIT ?",
+        facts = self.execute("SELECT id, text FROM facts WHERE kind = 'fact' ORDER BY id DESC LIMIT ?",
                              (SMALL_MEMORY + 1,))
-        found = [m for m in self.search(query, limit + len(prefs)) if m["kind"] != "preference"]
+        found = [m for m in self.search(query, limit + len(prefs) + 4)
+                 if m["kind"] != "preference" and m.get("status") != "superseded"]
         if len(facts) <= SMALL_MEMORY:
             # Фактов мало — дешевле знать их все (имя пользователя нужно и в «привет»).
-            found = [{"title": "факт", "text": r[0]} for r in reversed(facts)] + \
+            found = [{"kind": "fact", "id": r[0], "title": "факт", "text": r[1]} for r in reversed(facts)] + \
                 [m for m in found if m["kind"] != "fact"][:limit]
         else:
             found = found[:limit]
+        return prefs, found
+
+    @staticmethod
+    def item_label(m: dict[str, Any]) -> str:
+        """«решение · факт · 2026-10-22» для заметки Obsidian, «факт» — для остального."""
+        if m.get("kind") != "vault":
+            return m["title"]
+        return " · ".join(x for x in (m["title"], STATUS_TITLES.get(m.get("status") or "", ""), m.get("date"))
+                          if x)
+
+    @classmethod
+    def format_context(cls, prefs: list[str], found: list[dict[str, Any]]) -> str:
         lines = []
         if prefs:
             lines.append("Предпочтения пользователя (соблюдай их):\n" + "\n".join(f"- {p}" for p in prefs))
         if found:
-            lines.append("Из памяти (факты о пользователе, заметки, прошлые задачи):\n" + "\n".join(
-                f"- [{m['title']}] {m['text']}" for m in found))
+            lines.append("Из памяти (факты о пользователе, заметки, прошлые задачи, решения и проверки; "
+                         "«предположение» и «план» — ещё не проверено и не сделано):\n" + "\n".join(
+                             f"- [{cls.item_label(m)}] {m['text']}" for m in found))
         return "\n".join(lines)
+
+    def context_for(self, query: str, limit: int = 6) -> str:
+        """Блок для системного промпта: предпочтения всегда, остальное — только относящееся к запросу."""
+        return self.format_context(*self.context_items(query, limit))
 
     def delete_fact(self, fact_id: int) -> bool:
         return self.modify("DELETE FROM facts WHERE id = ?", (int(fact_id),)) > 0

@@ -222,6 +222,12 @@ code { font: 13px var(--code); }
 @keyframes talk { 0%, 100% { opacity: .7; scale: .98; } 40% { opacity: 1; scale: 1.09; } }
 @keyframes blink { 50% { opacity: 0; } }
 
+/* сфера (orb.js): canvas поверх кнопки; клики проходят сквозь него к кнопке «Слушать» */
+.eye .orb { position: absolute; left: -8%; top: -8%; width: 116%; height: 116%; pointer-events: none; display: none; }
+.eye.orb-on { --size: clamp(240px, min(25vw, 42vh), 470px); margin-block: calc(var(--size) * .06); }
+.eye.orb-on .orb { display: block; }
+.eye.orb-on .eye-rings, .eye.orb-on .eye-core, .eye.orb-on::before { display: none; }
+.orb-source { margin: -6px 0 0; font: 12.5px/1.3 var(--display); color: var(--ash); letter-spacing: .02em; }
 .state { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .state-text { font: 600 21px/1.2 var(--display); }
 .state-detail { font: 14.5px/1.3 var(--display); color: var(--ash); max-width: 40ch; }
@@ -276,6 +282,31 @@ code { font: 13px var(--code); }
 
 /* --- подробности справа --- */
 .side-col { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--seam); border-radius: 12px; background: rgba(var(--signal-rgb), .015); }
+
+/* компактная панель памяти: что было в промпте последней задачи, связанные заметки, решения, шаги */
+.mem-brief { padding: 10px 14px 8px; border-bottom: 1px solid var(--seam); font-size: 13.5px; flex: none; max-height: 42%; overflow-y: auto; }
+.mb-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.mb-title { font: 600 13px var(--display); letter-spacing: .14em; text-transform: uppercase; color: var(--signal); }
+.mb-note { flex: 1; min-width: 0; color: var(--ash); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mb-row summary { display: flex; gap: 10px; align-items: baseline; padding: 3px 0; cursor: pointer; list-style: none; }
+.mb-row summary::-webkit-details-marker { display: none; }
+.mb-row summary::before { content: "›"; width: .7em; color: var(--ash); transition: rotate .15s; }
+.mb-row[open] summary::before { rotate: 90deg; }
+.mb-row.empty summary { cursor: default; }
+.mb-row.empty summary::before { opacity: 0; }
+.mb-k { flex: none; width: 6.4em; font: 600 12.5px var(--display); color: var(--ash); text-transform: uppercase; letter-spacing: .06em; }
+.mb-v { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--bone); }
+.mb-row.empty .mb-v { color: var(--ash); }
+.mb-list { list-style: none; margin: 2px 0 6px 1.4em; padding: 0; display: grid; gap: 4px; }
+.mb-list li { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; line-height: 1.4; overflow-wrap: anywhere; }
+.mb-list a { color: var(--bone); text-decoration-color: var(--seam-2); }
+.mb-list a:hover { color: var(--ember); }
+.st { font: 12px/1.5 var(--display); padding: 0 6px; border-radius: 4px; border: 1px solid var(--seam-2); color: var(--ash); white-space: nowrap; }
+.st.fact { color: var(--ok); border-color: rgba(73, 214, 155, .35); }
+.st.assumption { color: var(--warn); border-color: rgba(255, 181, 71, .35); }
+.st.plan { color: var(--ember); }
+.st.done { color: var(--bone); }
+.st.superseded { text-decoration: line-through; }
 /* Вкладок шесть, а колонка узкая: лишние переносятся во второй ряд — видны все, без скрытой прокрутки. */
 .tabs { display: flex; flex-wrap: wrap; column-gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--seam); }
 .tab {
@@ -429,6 +460,8 @@ code { font: 13px var(--code); }
   .deck { grid-template-columns: minmax(0, 1fr); gap: 26px; padding: 16px; }
   .eye-col { order: -1; }
   .eye { --size: clamp(170px, 46vw, 250px); }
+  .eye.orb-on { --size: clamp(200px, 56vw, 290px); }
+  .mem-brief { max-height: none; }
   .headline { max-width: none; margin-bottom: 16px; }
   .feed { max-height: 65vh; }
   .side-col { min-height: 60vh; }
@@ -444,5 +477,6 @@ code { font: 13px var(--code); }
 @media (prefers-reduced-motion: reduce) {
   .eye::before, .eye-rings .arc, .eye-rings .ticks-major, .entry.streaming .body::after, .timeline li.run::before { animation: none !important; }
   .eye-core, .eye::before { transition: none; }
+  .mb-row summary::before { transition: none; }
   .job.run .job-status { animation: none !important; }
 }

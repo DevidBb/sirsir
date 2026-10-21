@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from . import calculator, checks, console_utf8, files, mcp_client, site_studio, skills, team
+from . import calculator, checks, console_utf8, files, mcp_client, site_studio, skills, team, vault
 from .assistant import EXIT, MUTE, STOP, Assistant, Reply
 from .config import Config, load_dotenv
 from .gemini import GEMINI_HOST, api_key as gemini_key, make_llm
@@ -90,6 +90,11 @@ class App:
         self.reminders.register_tools(self.registry)
         self.notes = Notes(self.memory)
         self.notes.register_tools(self.registry)
+        # Заметки Obsidian ([memory.vault]): проекты, решения, проверки, следующие шаги — в файлах;
+        # факты и итоги задач — зеркалом из memory.db. Правила обмена — в начале vault.py.
+        self.vault = vault.setup(config, self.memory)
+        if self.vault is not None:
+            self.vault.register_tools(self.registry)
         self.schedules = Scheduler(self.memory)
         self.schedules.register_tools(self.registry)
         calculator.register_tools(self.registry)
@@ -102,6 +107,7 @@ class App:
         self.assistant = Assistant(config, self.llm, self.registry, self.memory,
                                    on_setting_changed=self._on_setting_changed)
         self.assistant.agent_backend = make_agent_backend(config)
+        self.assistant.vault = self.vault
         # Навыки: skills/<имя>/SKILL.md — инструкция и набор инструментов для повторяемых задач.
         self.skills = skills.setup(config, self.registry)
         self.assistant.skills = self.skills

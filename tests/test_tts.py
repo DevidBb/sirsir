@@ -102,3 +102,32 @@ def test_auto_engine_picks_available(tmp_path, monkeypatch):
     s = tts.Speaker("auto", silero_model=tmp_path / "нет.pt")
     s.load()
     assert s.engine_name == "pyttsx3"
+
+
+def test_speech_envelope_follows_loudness():
+    sr = 48000
+    t = np.arange(sr) / sr
+    quiet, loud = 0.02 * np.sin(2 * np.pi * 220 * t[:sr // 2]), 0.6 * np.sin(2 * np.pi * 220 * t[:sr // 2])
+    env = tts.speech_envelope(np.concatenate([quiet, loud, np.zeros(sr // 4)]).astype(np.float32), sr)
+    assert len(env) == int(1.25 / tts.ENVELOPE_FRAME)
+    assert max(env[:20]) < 0.1 and min(env[30:45]) > 0.9 and max(env[-10:]) == 0.0  # тихо → громко → пауза
+    assert tts.speech_envelope(np.zeros(10, np.float32), sr) == []
+
+
+def test_silero_level_is_the_playing_envelope(monkeypatch):
+    b = tts.SileroBackend("x.pt")
+    now = [100.0]
+    monkeypatch.setattr(tts.time, "monotonic", lambda: now[0])
+    assert b.level() == 0.0  # ничего не звучит
+    b.playing = (100.0, 0.02, [0.1, 0.9, 0.4])
+    now[0] = 100.025
+    assert b.level() == 0.9
+    now[0] = 100.5
+    assert b.level() == 0.0  # фраза кончилась
+    b.stop()
+    assert b.playing is None
+    s = tts.Speaker("print")
+    assert s.speech_level() is None  # без движка — сигнала нет, HUD покажет анимацию состояния
+    s.backend = b
+    b.playing = (now[0], 0.02, [0.7])
+    assert s.speech_level() == 0.7
