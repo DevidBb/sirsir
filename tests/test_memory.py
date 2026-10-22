@@ -35,3 +35,12 @@ def test_change_setting_tool_validates_range(tmp_path):
     assert "теперь 200" in tool.handler(key="tts.rate", value="200")
     assert changed == [("tts.rate", 200)]
     assert m.get_setting("tts.rate") == 200
+
+
+def test_fact_duplicates_ignore_case_spaces_and_end_punctuation_only(tmp_path):
+    m = Memory(tmp_path / "m.db")
+    assert m.add_fact("Меня зовут Давид")
+    assert not m.add_fact("меня зовут давид.")
+    assert m.add_fact("Пишу на C++") and m.add_fact("Пишу на C#")  # знаки внутри различают факты
+    assert m.add_fact("Сестра — Аня") and m.add_fact("Сестра Аня")
+    m.close()

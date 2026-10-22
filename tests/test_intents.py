@@ -161,3 +161,29 @@ def test_benchmark_speech_phrases_are_understood_as_text():
     wrong = [c[0] for c in bench.SPOKEN_COMMANDS if not bench.command_understood(matcher, c[0], c)]
     assert not wrong
     assert len(bench.SPOKEN_COMMANDS) >= 50
+
+
+@pytest.mark.parametrize("phrase,kind,title", [
+    ("запиши решение: сферу пишем на WebGL", "decision", "Сферу пишем на WebGL"),
+    ("Запиши решение, что сферу пишем на WebGL", "decision", "Сферу пишем на WebGL"),
+    ("следующий шаг — проверить HUD на Windows", "task", "Проверить HUD на Windows"),
+    ("запиши результат проверки: тесты прошли", "check", "Тесты прошли"),
+    ("добавь задачу: купить домен", "task", "Купить домен"),
+    ("Цель: запустить сайт до пятницы", "goal", "Запустить сайт до пятницы"),
+    ("запиши следующий шаг купить домен", "task", "Купить домен"),
+])
+def test_memory_note_phrases(m, phrase, kind, title):
+    intent = m.match(phrase)
+    assert intent.tool == "save_memory_note" and intent.args["type"] == kind and intent.args["title"] == title
+
+
+@pytest.mark.parametrize("phrase", [
+    "Решение: x = 5. Проверь, правильно ли я решил уравнение",
+    "Цель: написать эссе на 500 слов про климат. Помоги составить план",
+    "добавь мне задачу на завтра в 9 утра проверить почту",
+    "сохрани проверку орфографии в этом тексте",
+    "Решение-то какое у этой задачи?",
+])
+def test_requests_that_look_like_notes_go_to_the_model(m, phrase):
+    intent = m.match(phrase)
+    assert intent is None or intent.tool != "save_memory_note"

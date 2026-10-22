@@ -569,6 +569,8 @@ class App:
             self.mcp.close()
         if self.browser is not None:
             self.browser.close()
+        if self.vault is not None:
+            self.vault.close()  # отложенная синхронизация — до закрытия базы
         self.memory.close()
 
 

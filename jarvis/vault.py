@@ -64,7 +64,8 @@ SKIP_DIRS = {".obsidian", ".trash", ".git", "node_modules"}
 MAX_FILES = 5000
 MAX_BYTES = 256_000
 MAX_BODY = 4000
-SCAN_EVERY = 5.0  # с: перед задачей индекс обновляется не чаще
+# Версия разбора заметок: другая — индекс пересобирается целиком (после обновления Джарвиса).
+INDEX_VERSION = 2
 
 
 def slugify(text: str, limit: int = 60) -> str:
@@ -118,9 +119,13 @@ def split_frontmatter(text: str) -> tuple[dict[str, Any], str, bool]:
     if end < 0 or text[end + 4:end + 5] not in ("", "\n"):
         return {}, text, False
     meta: dict[str, Any] = {}
-    key = None
+    key, block = None, None
     for line in text[4:end].split("\n"):
-        if re.match(r"^\s+-\s", line) and key is not None:  # блочный список
+        if block is not None and (line[:1] in (" ", "\t") or not line.strip()):  # многострочное «description: |»
+            meta[key] = (meta[key] + ("\n" if block == "|" else " ") if meta[key] else "") + line.strip()
+            continue
+        block = None
+        if re.match(r"^\s*-\s", line) and key is not None:  # блочный список
             if not isinstance(meta.get(key), list):
                 meta[key] = []
             meta[key].append(_parse_scalar(line.strip()[2:]))
@@ -128,8 +133,49 @@ def split_frontmatter(text: str) -> tuple[dict[str, Any], str, bool]:
         m = re.match(r"^([A-Za-zА-Яа-яЁё_][\w-]*)\s*:\s*(.*)$", line)
         if m:
             key = m.group(1)
-            meta[key] = _parse_scalar(m.group(2)) if m.group(2).strip() else ""
+            raw = m.group(2).strip()
+            if re.fullmatch(r"[|>][+-]?", raw):
+                block, meta[key] = raw[0], ""
+            else:
+                meta[key] = _parse_scalar(raw) if raw else ""
     return meta, text[end + 5:].lstrip("\n"), True
+
+
+def split_raw_frontmatter(text: str) -> tuple[str, str]:
+    """(frontmatter как написан, с разделителями; тело). Без frontmatter — ("", текст)."""
+    text = text.lstrip("﻿").replace("\r\n", "\n")
+    if not text.startswith("---\n"):
+        return "", text
+    end = text.find("\n---", 4)
+    if end < 0 or text[end + 4:end + 5] not in ("", "\n"):
+        return "", text
+    return text[:end + 4] + "\n", text[end + 5:].lstrip("\n")
+
+
+def set_fields(raw: str, fields: dict[str, Any]) -> str:
+    """Поменять во frontmatter только эти поля. Остальное — свойства, добавленные в Obsidian, их типы,
+    многострочные значения, комментарии — остаётся как написано."""
+    fields = {k: v for k, v in fields.items() if v not in (None, "", [])}
+    if not raw:
+        return dump_frontmatter(fields)
+    inner = raw.rstrip("\n").split("\n")[1:-1]
+    for key, value in fields.items():
+        line = f"{key}: {_yaml_value(value)}"
+        i = next((n for n, s in enumerate(inner) if re.match(rf"{re.escape(key)}\s*:", s)), None)
+        if i is None:
+            inner.append(line)
+            continue
+        j = i + 1
+        while j < len(inner) and (inner[j][:1] in (" ", "\t") or inner[j].startswith("- ")):
+            j += 1  # продолжение прежнего многострочного значения или списка
+        inner[i:j] = [line]
+    return "---\n" + "\n".join(inner) + "\n---\n"
+
+
+def same_title(a: str, b: str) -> bool:
+    """Одна запись: без регистра, «ё» и лишних пробелов, но со знаками («C++» и «C#» — разные)."""
+    norm = lambda s: " ".join(s.casefold().replace("ё", "е").split()).rstrip(" .!")  # noqa: E731
+    return norm(a) == norm(b)
 
 
 def _first_sentence(body: str, limit: int = 200) -> str:
@@ -181,6 +227,7 @@ class Vault:
         self._projects: dict[str, str] = {}
         self._timer: threading.Timer | None = None
         self._timer_lock = threading.Lock()
+        self._closed = False
 
     # ---------- общее ----------
     def today(self) -> str:
@@ -200,12 +247,16 @@ class Vault:
 
     # ---------- синхронизация ----------
     def sync(self) -> dict[str, int]:
-        """Папки, индекс файлов, зеркало memory.db, указатели. Можно вызывать сколько угодно раз."""
+        """Папки, индекс файлов, зеркало memory.db, указатели. Можно вызывать сколько угодно раз.
+        Индекс обновляется по времени и размеру файлов; целиком — только когда изменился разбор (INDEX_VERSION)."""
         with self._lock:
             try:
                 for folder, _, _ in TYPES.values():
                     (self.root / folder).mkdir(parents=True, exist_ok=True)
-                stats = self.scan(force=True)
+                rebuild = self.memory.get_setting("vault.index_version") != INDEX_VERSION
+                stats = self.scan(force=rebuild)
+                if rebuild:
+                    self.memory.set_setting("vault.index_version", INDEX_VERSION)
                 stats["mirror"] = self.write_mirror()
                 stats["indexes"] = self.write_indexes()
                 self.last_error = None
@@ -219,19 +270,28 @@ class Vault:
     def sync_later(self, delay: float = 1.5) -> None:
         """Синхронизация в фоне после задачи или правки памяти (несколько подряд — одна запись)."""
         with self._timer_lock:
+            if self._closed:
+                return
             if self._timer is not None:
                 self._timer.cancel()
             self._timer = threading.Timer(delay, self.sync)
             self._timer.daemon = True
             self._timer.start()
 
+    def close(self) -> None:
+        """До закрытия memory.db: отложенная синхронизация иначе сработает на закрытой базе."""
+        with self._timer_lock:
+            self._closed = True
+            if self._timer is not None:
+                self._timer.cancel()
+        with self._lock:  # идущая синхронизация доделает запись
+            pass
+
     def refresh(self) -> None:
-        """Перед задачей: подхватить правки, сделанные в Obsidian (не чаще раза в SCAN_EVERY с).
-        Первый раз — полная синхронизация: папки, зеркало, указатели."""
+        """Перед задачей: подхватить правки, сделанные в Obsidian (по времени и размеру файлов — дёшево,
+        поэтому каждый раз). Первый раз — полная синхронизация: папки, зеркало, указатели."""
         if not self._synced:
             self.sync()
-            return
-        if time.monotonic() - self._scanned < SCAN_EVERY:
             return
         with self._lock:
             try:
@@ -257,38 +317,48 @@ class Vault:
     def scan(self, force: bool = False) -> dict[str, int]:
         """Индекс vault_notes ← файлы: новые и изменённые разобрать, удалённые убрать."""
         self._scanned = time.monotonic()
-        known = {n["path"]: (n["mtime"], n["size"]) for n in self.memory.vault_notes()}
         seen, changed = set(), 0
-        for path in self._files():
-            rel = self.rel(path)
-            seen.add(rel)
-            st = path.stat()
-            if not force and known.get(rel) == (st.st_mtime, st.st_size):
-                continue
-            if st.st_size > MAX_BYTES:
-                continue
-            self.memory.upsert_vault_note(self._parse(path, rel, st))
-            changed += 1
-        removed = [p for p in known if p not in seen]
-        for p in removed:
-            self.memory.delete_vault_note(p)
+        with self.memory.batch():  # одна транзакция на весь проход
+            if force:
+                self.memory.clear_vault_index()
+            known = {n["path"]: (n["mtime"], n["size"]) for n in self.memory.vault_notes()}
+            for path in self._files():
+                rel = self.rel(path)
+                try:
+                    st = path.stat()
+                except OSError:  # удалили или переименовали во время прохода
+                    continue
+                seen.add(rel)
+                if known.get(rel) == (st.st_mtime, st.st_size) or st.st_size > MAX_BYTES:
+                    continue
+                try:
+                    note = self._parse(path, rel, st)
+                except OSError:
+                    continue
+                self.memory.upsert_vault_note(note)
+                changed += 1
+            removed = [p for p in known if p not in seen]
+            for p in removed:
+                self.memory.delete_vault_note(p)
         return {"notes": len(seen), "changed": changed, "removed": len(removed)}
 
     def _parse(self, path: Path, rel: str, st: os.stat_result) -> dict[str, Any]:
         meta, body, _ = split_frontmatter(_read(path))
-        h1 = re.search(r"^#\s+(.+)$", body, re.M)
-        title = str(meta.get("title") or (h1.group(1).strip() if h1 else path.stem))[:200]
+        # Строки, похожие на пароли и ключи, в индекс (а значит, и в промпт модели и в INDEX.md) не попадают:
+        # ни строки текста, ни заголовок, ни свойства.
+        clean = "\n".join(line for line in body.split("\n") if not looks_secret(line))
+        safe = lambda value: "" if looks_secret(str(value or "")) else str(value or "")  # noqa: E731
+        h1 = re.search(r"^#\s+(.+)$", clean, re.M)
+        title = (safe(meta.get("title")) or (h1.group(1).strip() if h1 else "") or safe(path.stem) or "заметка")[:200]
         kind = str(meta.get("type") or "").strip().lower()
         kind = TYPE_ALIASES.get(kind, kind)
         status = str(meta.get("status") or "").strip().lower()
         status = STATUS_ALIASES.get(status, status)
-        # Строки, похожие на пароли и ключи, в индекс (а значит, и в промпт модели) не попадают.
-        clean = "\n".join(line for line in body.split("\n") if not looks_secret(line))
         return {"path": rel, "title": title, "type": kind if kind in VAULT_TYPE_TITLES else "note",
                 "status": status if status in STATUSES else "",
-                "project": str(meta.get("project") or ""), "topic": str(meta.get("topic") or ""),
+                "project": safe(meta.get("project")), "topic": safe(meta.get("topic")),
                 "date": str(meta.get("date") or ""), "updated": str(meta.get("updated") or meta.get("date") or ""),
-                "summary": str(meta.get("description") or "") or _first_sentence(clean),
+                "summary": safe(meta.get("description")) or _first_sentence(clean),
                 "body": clean[:MAX_BODY], "mtime": st.st_mtime, "size": st.st_size}
 
     # ---------- запись заметок ----------
@@ -327,7 +397,7 @@ class Vault:
             self.scan()
             project_rel = self._ensure_project(project, source) if project and kind != "project" else ""
             if kind == "decision":
-                result = self._save_decision(title, text, status, project_rel, topic or title, source)
+                result = self._save_decision(title, text, status, project_rel, topic, source)
             else:
                 result = self._save_note(kind, title, text, status, project_rel, source)
             self.write_indexes()
@@ -343,11 +413,11 @@ class Vault:
 
     def _ensure_project(self, project: str, source: str) -> str:
         """Путь заметки проекта: найти по заголовку или имени файла, иначе создать."""
-        want = slugify(project)
+        stem = project.casefold()
         for n in self.memory.vault_notes("type = 'project'"):
-            if slugify(n["title"]) == want or Path(n["path"]).stem in (want, f"проект-{want}"):
+            if same_title(n["title"], project) or Path(n["path"]).stem.casefold() in (stem, f"проект-{stem}"):
                 return n["path"]
-        path = self.note_path("project", project, self.today())
+        path = self._own_path(self.note_path("project", project, self.today()), project)
         if not path.exists():
             self._create(path, {"title": project, "type": "project", "status": "plan"},
                          "Проект создан автоматически, когда к нему сохранили первую запись. "
@@ -397,9 +467,22 @@ class Vault:
         rows = self.memory.vault_notes("path = ?", (rel,))
         return rows[0]["title"] if rows else Path(rel).stem
 
+    def _file_title(self, path: Path) -> str:
+        meta, body, _ = split_frontmatter(_read(path))
+        h1 = re.search(r"^#\s+(.+)$", body, re.M)
+        return str(meta.get("title") or (h1.group(1).strip() if h1 else path.stem))
+
+    def _own_path(self, path: Path, title: str) -> Path:
+        """Файл этой записи: «C++» и «C#», «???» и «!!!» дают одно имя файла — другой записи суффикс -2, -3…"""
+        base, n = path.stem, 2
+        while path.exists() and not same_title(self._file_title(path), title):
+            path = path.with_name(f"{base}-{n}.md")
+            n += 1
+        return path
+
     def _save_note(self, kind: str, title: str, text: str, status: str, project_rel: str,
                    source: str) -> dict[str, Any]:
-        path = self.note_path(kind, title, self.today())
+        path = self._own_path(self.note_path(kind, title, self.today()), title)
         rel = self.rel(path)
         links = [(self._title_of(project_rel), project_rel)] if project_rel else []
         if not path.exists():
@@ -417,13 +500,12 @@ class Vault:
         head = f"## {today} — {STATUS_TITLES[status]}" + (f" (было: {STATUS_TITLES.get(old_status, old_status)})"
                                                          if old_status and old_status != status else "")
         section = head + (f"\n\nИсточник: {source}" if source else "") + ("\n\n" + text if not same_text else "") + "\n"
-        meta.update(status=status, updated=today)
-        if source:
-            meta["source"] = source
+        fields: dict[str, Any] = {"status": status, "updated": today, "source": source}
         if project_rel and not meta.get("project"):
-            meta["project"] = self._project_slug(project_rel)
+            fields["project"] = self._project_slug(project_rel)
+        raw, body = split_raw_frontmatter(_read(path))
         body = self._insert_before_related(body, section)
-        _write(path, dump_frontmatter(meta) + "\n" + body)
+        _write(path, set_fields(raw, fields) + "\n" + body)
         self.memory.upsert_vault_note(self._parse(path, rel, path.stat()))
         return {"ok": True, "text": f"Обновил: {VAULT_TYPE_TITLES[kind]} «{title}» ({STATUS_TITLES[status]}).",
                 "note": self._note_info(rel), "created": False}
@@ -438,9 +520,12 @@ class Vault:
 
     def _save_decision(self, title: str, text: str, status: str, project_rel: str, topic: str,
                        source: str) -> dict[str, Any]:
-        topic = slugify(topic)
+        explicit = bool(topic.strip())
+        topic = slugify(topic if explicit else title, limit=200)
         active = [n for n in self.memory.vault_notes("type = 'decision' AND topic = ? AND status != 'superseded'",
                                                      (topic,), order="date DESC, id DESC")]
+        if not explicit:  # тема — сам заголовок: заменяет только решение с тем же заголовком, не с похожим slug
+            active = [n for n in active if same_title(n["title"], title)]
         for n in active:
             if norm_text(n["title"]) == norm_text(title) and (not text or norm_text(text) in norm_text(n["body"])):
                 if n["status"] != status and status in ("fact", "assumption"):
@@ -468,13 +553,12 @@ class Vault:
 
     def _set_meta(self, rel: str, note: str = "", **fields: Any) -> None:
         path = self.root / rel
-        meta, body, _ = split_frontmatter(_read(path))
-        meta.update(fields)
+        raw, body = split_raw_frontmatter(_read(path))
         if note and note not in body:
             h1 = re.search(r"^#\s+.+$", body, re.M)
             pos = h1.end() if h1 else 0
             body = body[:pos] + "\n\n" + note + "\n\n" + body[pos:].lstrip("\n")
-        _write(path, dump_frontmatter(meta) + "\n" + body.lstrip("\n"))
+        _write(path, set_fields(raw, fields) + "\n" + body.lstrip("\n"))
         self.memory.upsert_vault_note(self._parse(path, rel, path.stat()))
 
     def _note_info(self, rel: str) -> dict[str, Any]:

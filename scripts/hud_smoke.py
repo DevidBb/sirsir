@@ -224,6 +224,21 @@ def memory_vault(port: int) -> None:
 
 
 ORB_INFO = "() => window.JarvisHUD && JarvisHUD.orb ? JarvisHUD.orb.info() : null"
+# Доля голубых пикселей на снимке PNG: сфера голубая, «глаз» в теме «Ядро» красный. Счётчик кадров сферы
+# считает проходы цикла, а не нарисованное, поэтому смотрим на сам снимок.
+BLUE_SHARE = """async (b64) => {
+  const img = new Image(); img.src = "data:image/png;base64," + b64; await img.decode();
+  const c = document.createElement("canvas"); c.width = img.width; c.height = img.height;
+  const ctx = c.getContext("2d"); ctx.drawImage(img, 0, 0);
+  const d = ctx.getImageData(0, 0, c.width, c.height).data; let n = 0;
+  for (let i = 0; i < d.length; i += 4) if (d[i + 2] > 110 && d[i + 2] > d[i] + 40) n++;
+  return n / (d.length / 4);
+}"""
+
+
+def blue_share(page, selector: str) -> float:
+    import base64
+    return page.evaluate(BLUE_SHARE, base64.b64encode(page.locator(selector).screenshot()).decode())
 
 
 def orb_and_memory(browser, port: int, out: Path) -> None:
@@ -248,6 +263,14 @@ def orb_and_memory(browser, port: int, out: Path) -> None:
             info = page.evaluate(ORB_INFO) or {}
             check(info.get("state") == "speaking", f"сфера следует за состоянием ({name})", str(info.get("state")))
             page.locator("#core").screenshot(path=str(out / f"hud-orb-{name}.png"))
+            shown = blue_share(page, "#core")
+            # как пользователь: «Система → Сфера → Без сферы (простой глаз)»; вкладка скрыта, поэтому через change
+            page.evaluate("() => { const s = document.getElementById('orbQuality'); s.value = 'off';"
+                          " s.dispatchEvent(new Event('change')); }")
+            page.wait_for_timeout(300)
+            hidden = blue_share(page, "#core")
+            check(shown > 0.003 and hidden < shown / 3, f"сфера видна на экране ({name})",
+                  f"голубых пикселей со сферой {shown:.2%}, без сферы {hidden:.2%}")
             if name == "webgl":
                 summary = page.locator("#mbDecSum").inner_text()
                 check(SMOKE_DECISION in summary, "панель памяти в HUD: последнее решение", summary[:80])
@@ -287,8 +310,8 @@ def screenshots(port: int) -> None:
             finally:
                 browser.close()
         warn(True, "снимки HUD", ", ".join(sorted(p.name for p in out.glob("hud-*.png"))))
-    except Exception as e:  # noqa: BLE001 — снимки не должны валить проверку
-        warn(False, "снимки HUD", str(e)[:200])
+    except Exception as e:  # noqa: BLE001 — без браузера не проверить ни сферу, ни поиск: это сбой установки
+        check(False, "браузер для снимков и проверки сферы", str(e)[:200])
 
 
 def wait_port_closed(port: int, timeout: float) -> bool:

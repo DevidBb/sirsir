@@ -2,6 +2,7 @@
 ссылки для Obsidian и GitHub, индекс для поиска, контекст в промпт и событие для HUD."""
 
 import re
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -244,3 +245,97 @@ def test_fact_duplicates_with_other_case_are_skipped():
     assert m.add_fact("Меня зовут Давид")
     assert not m.add_fact("меня зовут Давид.")
     assert len(m.list_facts()) == 1
+
+
+def test_update_keeps_properties_added_in_obsidian(vault):
+    r = vault.save("task", "Проверить HUD на Windows", "Открыть run_web.bat.")
+    path = vault.root / r["note"]["path"]
+    path.write_text(read(path).replace("status: plan\n", "status: plan\nurgent: true\npriority: 2\n"
+                                       "description: |\n  Сфера и панель памяти.\n  На ПК с RTX 3060.\n"
+                                       "# своё поле ниже\ndeadline: 2026-11-01T18:00\n"), encoding="utf-8")
+    vault.save("task", "Проверить HUD на Windows", "Готово.", status="done")
+    after = read(path)
+    for line in ("urgent: true\n", "priority: 2\n", "description: |\n  Сфера и панель памяти.\n  На ПК с RTX 3060.\n",
+                 "# своё поле ниже\n", "deadline: 2026-11-01T18:00\n", "status: done\n"):
+        assert line in after
+    meta, _, _ = split_frontmatter(after)
+    assert meta["description"] == "Сфера и панель памяти.\nНа ПК с RTX 3060." and meta["status"] == "done"
+
+
+def test_superseding_keeps_properties_added_in_obsidian(vault):
+    old = vault.save("decision", "Сфера на WebGL", "Пишем на чистом WebGL.", topic="сфера")
+    path = vault.root / old["note"]["path"]
+    path.write_text(read(path).replace("status: fact\n", "status: fact\nreviewed: true\n"), encoding="utf-8")
+    vault.save("decision", "Сфера на Three.js", "Берём Three.js.", topic="сфера")
+    after = read(path)
+    assert "reviewed: true\n" in after and "status: superseded\n" in after
+
+
+def test_secrets_in_properties_and_headings_stay_out_of_index_and_prompt(vault, mem):
+    (vault.root / "Проверки" / "роутер.md").write_text(
+        "---\ntitle: Роутер\ndescription: пароль от роутера Qwerty2024!\n---\n\nРоутер настроен.\n", encoding="utf-8")
+    (vault.root / "Мои").mkdir()
+    (vault.root / "Мои" / "почта.md").write_text("# Пароль от почты: Zx9vB7nM\n\nПочтовый ящик настроен.\n",
+                                                 encoding="utf-8")
+    vault.sync()
+    ctx = mem.context_for("роутер почта настроен")
+    indexes = "".join(read(p) for p in vault.root.rglob(INDEX))
+    assert "Роутер" in ctx
+    for secret in ("Qwerty2024", "Zx9vB7nM"):
+        assert secret not in ctx and secret not in indexes and not mem.search(secret)
+
+
+def test_different_records_with_one_file_name_stay_apart(vault):
+    vault.save("task", "Переписать модуль на C++")
+    r = vault.save("task", "Переписать модуль на C#")
+    assert r["created"] and r["text"].startswith("Записал")
+    titles = sorted(vault._file_title(p) for p in (vault.root / "Задачи").glob("задача-*.md"))
+    assert titles == ["Переписать модуль на C#", "Переписать модуль на C++"]
+    assert vault.save("task", "???")["created"] and vault.save("task", "!!!")["created"]
+    long = "Обновить драйвер видеокарты на рабочем компьютере и проверить сферу на "
+    vault.save("decision", long + "NVIDIA")
+    b = vault.save("decision", long + "AMD")
+    assert b["superseded"] == [] and {d["title"] for d in vault.recent("decision")} == {long + "NVIDIA", long + "AMD"}
+    assert broken_links(vault.root) == []
+
+
+def test_edit_in_obsidian_is_seen_by_the_very_next_task(vault, mem):
+    r = vault.save("decision", "Голос", "Используем pyttsx3.")
+    path = vault.root / r["note"]["path"]
+    path.write_text(read(path).replace("pyttsx3", "Silero"), encoding="utf-8")
+    vault.refresh()  # сразу, без паузы
+    assert "Silero" in mem.context_for("какой голос")
+
+
+def test_sync_reparses_only_changed_files_and_rebuilds_after_a_format_change(vault, mem, monkeypatch):
+    for i in range(5):
+        vault.save("task", f"Шаг номер {i}")
+    calls = []
+    real = vault._parse
+    monkeypatch.setattr(vault, "_parse", lambda *a: calls.append(a[1]) or real(*a))
+    vault.sync()
+    assert calls == []
+    mem.set_setting("vault.index_version", 1)  # разбор изменился в новой версии
+    vault.sync()
+    assert len(calls) == 5 and len(mem.vault_notes()) == 5 and mem.search("Шаг номер")
+    assert mem.get_setting("vault.index_version") != 1
+
+
+def test_close_cancels_pending_sync(vault, mem, caplog):
+    vault.sync_later(delay=0.05)
+    vault.close()
+    mem.close()
+    vault.sync_later(delay=0.01)  # после закрытия — ничего
+    time.sleep(0.2)
+    assert "closed database" not in caplog.text
+
+
+def test_voice_decision_with_the_same_title_supersedes_the_old_one(vault):
+    from jarvis.intents import IntentMatcher
+    matcher = IntentMatcher({}, {})
+    first = matcher.match("запиши решение: сфера — пишем на WebGL").args
+    second = matcher.match("запиши решение: сфера — пишем на Three.js").args
+    old = vault.save(first["type"], first["title"], first["text"], first["status"])
+    new = vault.save(second["type"], second["title"], second["text"], second["status"])
+    assert new["superseded"] == [old["note"]["path"]]
+    assert [d["path"] for d in vault.recent("decision")] == [new["note"]["path"]]

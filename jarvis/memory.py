@@ -6,6 +6,7 @@ import json
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -125,7 +126,8 @@ class Memory:
         if str(db_path) != ":memory:":
             self.path.parent.mkdir(parents=True, exist_ok=True)
         self.max_facts = max_facts
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()  # batch() держит его, пока вложенные modify() пишут
+        self._batching = 0
         self._db = sqlite3.connect(str(db_path), check_same_thread=False)
         self._db.executescript(SCHEMA)
         self._migrate()
@@ -160,15 +162,29 @@ class Memory:
         """Запрос под общей блокировкой (для модулей, хранящих данные в той же БД)."""
         with self._lock:
             rows = self._db.execute(sql, params).fetchall()
-            self._db.commit()
+            if not self._batching:
+                self._db.commit()
             return rows
 
     def modify(self, sql: str, params: tuple = ()) -> int:
         """Изменяющий запрос; возвращает число затронутых строк."""
         with self._lock:
             count = self._db.execute(sql, params).rowcount
-            self._db.commit()
+            if not self._batching:
+                self._db.commit()
             return count
+
+    @contextmanager
+    def batch(self):
+        """Много изменений — одна транзакция: индекс тысяч заметок не пишет на диск после каждой."""
+        with self._lock:
+            self._batching += 1
+            try:
+                yield
+            finally:
+                self._batching -= 1
+                if not self._batching:
+                    self._db.commit()
 
     # --- настройки ---
     def get_setting(self, key: str, default: Any = None) -> Any:
@@ -191,9 +207,9 @@ class Memory:
     # --- факты ---
     @staticmethod
     def _norm(text: str) -> str:
-        """Текст без регистра, «ё» и знаков препинания — для поиска повторов."""
-        import re
-        return " ".join(re.findall(r"\w+", text.lower().replace("ё", "е")))
+        """Текст без регистра, «ё», лишних пробелов и знаков в конце — для поиска повторов («Меня зовут Давид.»).
+        Знаки внутри остаются: «Пишу на C++» и «Пишу на C#» — разные факты."""
+        return " ".join(text.casefold().replace("ё", "е").split()).rstrip(" .!?,;:…")
 
     def add_fact(self, text: str, kind: str = "fact") -> bool:
         text = " ".join(text.split())[:300]
@@ -328,6 +344,15 @@ class Memory:
 
     def delete_vault_note(self, path: str) -> None:
         self.modify("DELETE FROM vault_notes WHERE path = ?", (path,))
+
+    def clear_vault_index(self) -> None:
+        """Перед полной переиндексацией. Сначала поиск одним запросом: триггер на каждую строку
+        («DELETE … WHERE ref = old.id» — полный проход по FTS) на тысячах заметок занимал минуты."""
+        with self._lock:
+            self._db.execute("DELETE FROM mem_fts WHERE kind = 'vault'")
+            self._db.execute("DELETE FROM vault_notes")
+            if not self._batching:
+                self._db.commit()
 
     def context_items(self, query: str, limit: int = 6) -> tuple[list[str], list[dict[str, Any]]]:
         """Что пойдёт в промпт: предпочтения всегда, остальное — относящееся к запросу.
