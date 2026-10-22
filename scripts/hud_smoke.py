@@ -130,7 +130,7 @@ def main() -> int:
         status, page = http(port, "/")
         check(status == 200 and b"<html" in page.lower(), "страница HUD отдаётся")
         check(b"/static/hud.js?v=" in page, "скрипты с версией (после обновления не из кэша)")
-        for asset in ("/static/hud.js", "/static/hud.css", "/static/markdown.js"):
+        for asset in ("/static/hud.js", "/static/hud.css", "/static/markdown.js", "/static/orb.js"):
             status, _ = http(port, asset)
             check(status == 200, f"файл {asset}")
 
@@ -171,6 +171,7 @@ def main() -> int:
 
         status, raw = http(port, "/api/memory/export")
         check(status == 200 and json.loads(raw).get("format") == "jarvis-memory", "экспорт памяти")
+        memory_vault(port)
 
         # Настоящий поиск через браузер Джарвиса (Chromium, Playwright) — без модели.
         reply, events = ws_dialog(port, "найди в интернете официальный сайт python", 120)
@@ -189,6 +190,72 @@ def main() -> int:
     finally:
         code = finish(proc, work, log_out, args.keep_data)
     return code
+
+
+SMOKE_DECISION = "Смоук-проверка HUD записывает решения"
+
+
+def memory_vault(port: int) -> None:
+    """Заметки Obsidian (во временной папке данных): указатель, решение быстрой командой без модели."""
+    status, raw = http(port, "/api/memory/brief")
+    vault = (json.loads(raw).get("vault") or {}) if status == 200 else {}
+    if not check(status == 200 and vault.get("enabled") is True and not vault.get("error"),
+                 "заметки Obsidian включены", vault.get("error") or vault.get("path", "")):
+        return
+    status, _ = http(port, "/api/memory/vault/sync", "POST", {}, headers={"Origin": "http://evil.example"})
+    check(status == 403, "чужой сайт не трогает заметки Obsidian")
+    status, raw = http(port, "/api/memory/vault/sync", "POST", {})
+    check(status == 200 and json.loads(raw).get("ok") is True, "указатель Obsidian пересобирается",
+          raw.decode("utf-8", "replace")[:200])
+    root = Path(vault["path"])
+    check((root / "INDEX.md").exists() and (root / "Джарвис").is_dir(), "указатель и зеркало memory.db в папке",
+          str(root))
+
+    reply, _ = ws_dialog(port, "запиши решение: " + SMOKE_DECISION[:1].lower() + SMOKE_DECISION[1:])
+    check(reply is not None and "Записал решение" in reply.get("text", ""), "«запиши решение: …» без модели",
+          (reply or {}).get("text", "нет ответа")[:80])
+    notes = list((root / "Решения").glob("*.md"))
+    check(any(SMOKE_DECISION in n.read_text(encoding="utf-8") for n in notes), "решение — файл Markdown в «Решения»",
+          ", ".join(n.name for n in notes) or "файлов нет")
+    status, raw = http(port, "/api/memory/brief")
+    decisions = json.loads(raw).get("decisions", []) if status == 200 else []
+    check(any(d.get("title") == SMOKE_DECISION for d in decisions), "панель памяти показывает решение",
+          "; ".join(d.get("title", "") for d in decisions) or "решений нет")
+
+
+ORB_INFO = "() => window.JarvisHUD && JarvisHUD.orb ? JarvisHUD.orb.info() : null"
+
+
+def orb_and_memory(browser, port: int, out: Path) -> None:
+    """Сфера рисует кадры (WebGL или запасной Canvas 2D) и следует за состоянием; панель памяти; без ошибок JS."""
+    errors: list[str] = []
+    try:
+        for name, query in (("webgl", ""), ("canvas", "?orb=canvas")):
+            page = browser.new_page(viewport={"width": 1440, "height": 900})
+            page.on("pageerror", lambda e: errors.append(str(e)[:200]))
+            page.goto(f"http://127.0.0.1:{port}/{query}")
+            page.wait_for_timeout(2500)
+            info = page.evaluate(ORB_INFO) or {}
+            # drawn обнуляется, когда сфера сама снижает качество на медленной машине
+            drawing = info.get("drawn", 0) > 0 or bool(info.get("degraded"))
+            want = ("canvas",) if name == "canvas" else ("webgl", "canvas")
+            check(info.get("renderer") in want and drawing, f"сфера рисует кадры ({name})",
+                  f"{info.get('renderer')}, качество {info.get('quality')}, {info.get('drawn')} кадров, "
+                  f"{info.get('fps')} к/с, {info.get('gpu') or 'GPU неизвестен'}"
+                  + (f", снижено: {'; '.join(info['degraded'])}" if info.get("degraded") else ""))
+            page.evaluate("() => JarvisHUD.handle({type: 'state', state: 'speaking'})")
+            page.wait_for_timeout(1200)
+            info = page.evaluate(ORB_INFO) or {}
+            check(info.get("state") == "speaking", f"сфера следует за состоянием ({name})", str(info.get("state")))
+            page.locator("#core").screenshot(path=str(out / f"hud-orb-{name}.png"))
+            if name == "webgl":
+                summary = page.locator("#mbDecSum").inner_text()
+                check(SMOKE_DECISION in summary, "панель памяти в HUD: последнее решение", summary[:80])
+                page.locator("#memBrief").screenshot(path=str(out / "hud-memory.png"))
+            page.close()
+    except Exception as e:  # noqa: BLE001 — браузер запустился, значит сбой здесь — ошибка HUD
+        check(False, "сфера и панель памяти в браузере", str(e)[:200])
+    check(not errors, "HUD без ошибок JavaScript", "; ".join(errors)[:400])
 
 
 def screenshots(port: int) -> None:
@@ -216,6 +283,7 @@ def screenshots(port: int) -> None:
                     if action == "blue":
                         page.click("#themeBtn")  # тема хранится в браузере — вернуть как было
                     page.close()
+                orb_and_memory(browser, port, out)
             finally:
                 browser.close()
         warn(True, "снимки HUD", ", ".join(sorted(p.name for p in out.glob("hud-*.png"))))
