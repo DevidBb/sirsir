@@ -701,6 +701,7 @@ def create_app(runtime: Runtime, port: int):
     @asynccontextmanager
     async def lifespan(_app):
         hub.loop = asyncio.get_running_loop()
+        hub.loop.set_exception_handler(quiet_disconnects)
         yield
 
     routes = [
@@ -734,6 +735,15 @@ def create_app(runtime: Runtime, port: int):
         Mount("/static", StaticFiles(directory=STATIC_DIR), name="static"),
     ]
     return Starlette(routes=routes, lifespan=lifespan)
+
+
+def quiet_disconnects(loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+    """Браузер закрыл вкладку посреди ответа: на Windows цикл Proactor пишет это как ERROR с трассировкой
+    (ConnectionResetError в _call_connection_lost). Это не сбой — в журнал только отладкой."""
+    if isinstance(context.get("exception"), (ConnectionResetError, ConnectionAbortedError)):
+        log.debug("Браузер закрыл соединение: %s", context.get("message"))
+        return
+    loop.default_exception_handler(context)
 
 
 def static_version() -> str:

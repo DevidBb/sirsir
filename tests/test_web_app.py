@@ -9,7 +9,7 @@ from starlette.testclient import TestClient  # noqa: E402
 
 from conftest import ROOT, FakeLLM, text  # noqa: E402
 from jarvis.main import App  # noqa: E402
-from jarvis.web_app import Hub, Runtime, _same_origin, create_app  # noqa: E402
+from jarvis.web_app import Hub, Runtime, _same_origin, create_app, quiet_disconnects  # noqa: E402
 
 BASE = "http://127.0.0.1:8765"
 WS = "ws://127.0.0.1:8765/ws"
@@ -427,3 +427,22 @@ def test_audio_level_reports_speech_signal_or_none(server):
     app.speaker.speech_level = lambda: None  # системный голос: громкости нет
     assert client.get("/api/audio/level").json()["speech"] is None
     app.voice_active = False
+
+
+def test_quiet_disconnects_drops_only_browser_resets():
+    """Закрытая вкладка (обрыв соединения) — не ERROR в журнале; остальные ошибки цикла — как обычно."""
+    seen = []
+
+    class Loop:
+        def default_exception_handler(self, context):
+            seen.append(context)
+
+    loop = Loop()
+    quiet_disconnects(loop, {"message": "Exception in callback _call_connection_lost",
+                             "exception": ConnectionResetError(10054, "reset")})
+    quiet_disconnects(loop, {"message": "aborted", "exception": ConnectionAbortedError()})
+    assert seen == []
+    other = {"message": "boom", "exception": ValueError("x")}
+    quiet_disconnects(loop, other)
+    quiet_disconnects(loop, {"message": "no exception"})
+    assert seen == [other, {"message": "no exception"}]
