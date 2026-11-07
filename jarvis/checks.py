@@ -69,7 +69,11 @@ def check_packages(voice: bool, config: Config | None = None) -> list[CheckResul
 def check_ollama(config: Config) -> list[CheckResult]:
     # Ollama обязательна, только если выбрана как провайдер модели.
     # Гибрид использует Ollama для быстрых обычных вопросов и fallback.
-    required = str(config.get("llm.provider", "ollama")).lower() in ("ollama", "hybrid")
+    provider = str(config.get("llm.provider", "ollama")).lower()
+    required = provider in ("ollama", "hybrid")
+    if provider == "gemini":
+        from .gemini import api_key
+        required = not api_key()  # без ключа Gemini отвечает именно Ollama
     client = OllamaClient(config.get("llm.base_url"), config.get("llm.model"))
     try:
         models = client.list_models()
@@ -96,8 +100,10 @@ def check_gemini(config: Config) -> list[CheckResult]:
         return []
     from .gemini import KEY_ENV, api_key
     ok = bool(api_key())
+    # Без ключа Джарвис не ломается: отвечает локальная Ollama (см. gemini.make_llm).
     return [CheckResult("Gemini", ok, "ключ найден" if ok else
-                        f"нет ключа; добавьте {KEY_ENV}=... в .env (https://aistudio.google.com/apikey)")]
+                        f"нет ключа — пока отвечает локальная Ollama; добавьте {KEY_ENV}=... в .env "
+                        "(https://aistudio.google.com/apikey)", required=False)]
 
 
 def check_ollama_cloud(config: Config) -> list[CheckResult]:

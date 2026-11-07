@@ -223,3 +223,43 @@ def test_reminder_wakes_idle_loop(make_app, capsys):
     run(app)
     assert delivered.is_set(), "напоминание не дошло до голосового цикла за 10 с"
     assert "Напоминание: полить цветы." in capsys.readouterr().out
+
+
+class TimedBackend:
+    """Голос без звука: отмечает начало «воспроизведения», как Silero/SAPI."""
+
+    def __init__(self, *args):
+        pass
+
+    def load(self):
+        pass
+
+    def apply(self, rate, volume):
+        pass
+
+    def speak(self, sentence):
+        self.notify()
+
+    def stop(self):
+        pass
+
+
+def test_voice_reply_reports_speed_but_not_empty_replies(make_app, monkeypatch, capsys):
+    from jarvis import text_to_speech as tts
+    monkeypatch.setattr(tts, "Pyttsx3Backend", TimedBackend)
+    blocks = (marker(WAKE) + speech() + silence(0.8)     # «Джарвис, который час»
+              + speech() + silence(0.8)                  # «сколько будет 2 плюс 2»
+              + speech() + silence(0.8)                  # «стоп» — пустой ответ, замер не нужен
+              + silence(1.5))
+    app = make_app(blocks, ["который час", "сколько будет 2 плюс 2", "стоп"])
+    app.speaker = Speaker("pyttsx3")
+    app.speaker.load()
+    events = []
+    app.observer = events.append
+    run(app)
+    timings = [e for e in events if e["type"] == "timing"]
+    assert len(timings) == 2
+    # Каждый замер — от своей фразы: отметка первого звука сбрасывается перед ответом.
+    for t in timings:
+        assert t["voice"] is not None and 0 <= t["voice"] <= t["total"] and t["stt"] >= 0
+    assert "(скорость: распознал за" in capsys.readouterr().out

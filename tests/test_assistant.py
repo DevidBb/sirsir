@@ -24,11 +24,12 @@ def build(config, responses):
 
 
 def test_plain_answer_and_history(config):
-    a = build(config, [text("Привет!"), text("Всё хорошо.")])
-    assert a.handle("привет").text == "Привет!"
-    a.handle("как дела")
+    a = build(config, [text("Это функция, которая вызывает саму себя."), text("Например, факториал.")])
+    assert a.handle("что такое рекурсия").text == "Это функция, которая вызывает саму себя."
+    a.handle("приведи пример")
     msgs = a.fake.requests[1]["messages"]
-    assert [m["content"] for m in msgs[1:]] == ["привет", "Привет!", "как дела"]
+    assert [m["content"] for m in msgs[1:]] == ["что такое рекурсия", "Это функция, которая вызывает саму себя.",
+                                                "приведи пример"]
 
 
 def test_safe_tool_runs_and_result_goes_back(config):
@@ -121,7 +122,7 @@ def test_facts_in_system_prompt(config):
 
 def test_llm_unavailable(config):
     a = build(config, [LLMError("down")])
-    assert "Ollama" in a.handle("привет").text
+    assert "Ollama" in a.handle("что такое рекурсия").text
     assert len(a.conversation) == 0
 
 

@@ -97,6 +97,7 @@
       case "notice": addSystem(ev.text); if (ev.reminder) speak(ev.text); break;
       case "skill": timelineAdd("task", "Навык: " + ev.name, ev.description || "", "", ev.ts); break;
       case "route": timelineEvent(ev); break;
+      case "timing": timelineEvent(ev); break;
       case "delegate": timelineAdd("task", "Поручение агенту " + (AGENT_TEXT[ev.agent] || ev.agent), ev.text || "", "", ev.ts); break;
       case "site": renderProject(ev.project, true); break;
       case "team": renderTeam(ev.job, true); break;
@@ -505,6 +506,12 @@
     } else if (ev.type === "confirm") timelineAdd("warn", "Нужно подтверждение", ev.action || "", "", ev.ts);
     else if (ev.type === "cancelled") timelineAdd("fail", "Задача остановлена", "", "", ev.ts);
     else if (ev.type === "route") timelineAdd("route", ROUTE_TEXT[ev.target] || ev.target, ROUTE_WHERE[ev.target] + (ev.reason || ""), "", ev.ts);
+    else if (ev.type === "timing") {
+      // Скорость голосового ответа: от конца фразы до первого звука и до конца ответа.
+      const total = "весь ответ " + Number(ev.total).toFixed(1) + " с";
+      timelineAdd("ok", ev.voice != null ? "Голос через " + Number(ev.voice).toFixed(1) + " с · " + total
+                                         : "Ответ за " + Number(ev.total).toFixed(1) + " с", ev.text || "", "", ev.ts);
+    }
   }
   // Гибридный режим: кто отвечает на реплику и почему.
   const ROUTE_TEXT = { claude: "Отвечает Claude", local: "Отвечает Ollama" };

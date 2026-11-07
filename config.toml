@@ -76,16 +76,19 @@ preload = true
 # Если Ollama не запущена — запустить «ollama serve» автоматически.
 autostart_ollama = true
 max_tool_calls_per_turn = 3
-# Режим модели:
+# Режим модели. По умолчанию один «мозг» — Gemini (облако Google, бесплатный ключ GEMINI_API_KEY в .env):
+# быстрые команды («открой …», «привет») работают без модели, остальное отвечает одна быстрая модель.
+# Без ключа Gemini временно отвечает локальная Ollama. Другие режимы:
 # "hybrid" — быстрые команды локально; короткие вопросы к Ollama; сложные и актуальные запросы к Claude.
 # "ollama" — только локальная модель; "claude" — Claude Agent SDK для всех запросов, требующих LLM;
 # "gemini" — Gemini (облако Google, бесплатный тариф) вместо Ollama, нужен GEMINI_API_KEY в .env.
-# "team" — Ollama Cloud, ChatGPT/Codex, Gemini, Claude и локальная модель вместе;
+# "team" — Ollama Cloud, ChatGPT/Codex, Gemini, Claude и локальная модель вместе (медленно: ждёт всех;
+#          для отдельного вопроса всем сразу есть команда «спроси всех: …»);
 # "codex" — ответы ChatGPT через Codex CLI; "ollama_cloud" — только Ollama Cloud.
 # Для Claude нужна авторизация "claude login" или ANTHROPIC_API_KEY в окружении.
 # При отсутствии пакета Claude гибридный режим автоматически оставляет все ответы локальными.
 # Переключение: HUD → Настройки → Модель.
-provider = "team"
+provider = "gemini"
 # Модель Ollama с поддержкой изображений для «посмотри на экран» (пусто — нет;
 # например "qwen2.5vl:7b", ~6 ГБ: ollama pull qwen2.5vl:7b). С провайдером claude не нужна.
 vision_model = ""

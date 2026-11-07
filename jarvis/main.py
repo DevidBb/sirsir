@@ -32,6 +32,8 @@ from .tool_registry import ToolRegistry
 from .windows_control import WindowsController
 
 log = logging.getLogger("jarvis")
+# Флаг одноразового перехода на один основной «мозг» (см. migrate_single_brain).
+SINGLE_BRAIN_FLAG = "migration.single_brain"
 
 
 @dataclass
@@ -503,7 +505,9 @@ class App:
                     print("(команду не услышал — после сигнала скажите её громче или ближе к микрофону)",
                           flush=True)
                 return
+            t_end = time.monotonic()  # фраза закончилась (после паузы тишины)
             heard = asr.transcribe(audio)
+            t_text = time.monotonic()
             text = strip_wake_phrase(heard, phrases)
             if not text:
                 if first_turn and not heard:
@@ -520,6 +524,7 @@ class App:
                 self._speak(mic, sentence)
                 return not self.barged_in
 
+            self.speaker.mark_timing()
             with self.handle_lock:
                 reply = self.assistant.handle(text, on_sentence=speak_sentence)
             self.observer({"type": "voice_reply", "reply": reply})
@@ -529,6 +534,8 @@ class App:
                 self.speaker.interrupt()
             if not reply.spoken:
                 self._speak(mic, reply.text)
+            if reply.text and not self.assistant.dictation.active:  # не шуметь на диктовку и «стоп»
+                self._report_timing(cfg.silence_ms_to_stop, t_end, t_text, time.monotonic())
             if reply.action == MUTE:
                 mic.mute()
                 return
@@ -537,6 +544,28 @@ class App:
                 return
             if not reply.expect_followup:
                 return
+
+    def _report_timing(self, silence_ms: int, t_end: float, t_text: float, t_done: float) -> None:
+        """Скорость ответа на голосовую команду: в журнал, консоль и ленту HUD.
+        Отсчёт — от момента, когда помощник понял, что фраза закончилась (после паузы тишины).
+        «Голос через» — первый звук ответа (у «спроси всех» это объявление о начале работы),
+        «весь ответ» — пока Джарвис не договорил."""
+        stt = t_text - t_end
+        total = t_done - t_end
+        first = self.speaker.first_audio_at
+        voice = first - t_end if first is not None and first >= t_end else None
+        heard = f"распознал за {stt:.2f} с, "
+        tail = f" после конца фразы (+{silence_ms / 1000:.1f} с ожидания тишины)"
+        if voice is not None:
+            summary = f"{heard}голос через {voice:.2f} с, весь ответ {total:.2f} с{tail}"
+        else:
+            summary = f"{heard}ответ за {total:.2f} с{tail}"
+        log.info("Скорость: %s", summary)
+        print(f"(скорость: {summary})", flush=True)
+        self.observer({"type": "timing", "stt": round(stt, 2),
+                       "voice": None if voice is None else round(voice, 2),
+                       "total": round(total, 2), "silence": round(silence_ms / 1000, 2),
+                       "text": summary})
 
     def _start_console(self) -> None:
         def loop() -> None:
@@ -630,10 +659,35 @@ def apply_saved_settings(config: Config) -> None:
         log.warning("Не удалось прочитать сохранённые настройки: %s", e)
         return
     try:
+        migrate_single_brain(config, memory)
         for key, value in memory.all_settings().items():
             config.set(key, value)
     finally:
         memory.close()
+
+
+def needs_local_ollama(config: Config) -> bool:
+    """Нужна ли запущенная Ollama: локальная модель отвечает сама или подменяет Gemini без ключа."""
+    provider = str(config.get("llm.provider", "ollama"))
+    return (provider in ("ollama", "hybrid") or (provider == "gemini" and not gemini_key())
+            or (provider == "team" and "local" in config.get("team.members", [])))
+
+
+def migrate_single_brain(config: Config, memory: Memory) -> None:
+    """Один раз: модель, выбранная раньше в HUD, уступает основной из config.toml (по умолчанию Gemini).
+    Владелец попросил одного быстрого Джарвиса вместо выбора из нескольких режимов; дальше выбор
+    в HUD снова сохраняется как обычно. Вызывать ДО применения memory.db к config: здесь
+    config — значения из config.toml и config.local.toml. Без ключа Gemini ничего не меняем."""
+    if memory.get_setting(SINGLE_BRAIN_FLAG):
+        return
+    default = str(config.get("llm.provider", "ollama"))
+    saved = memory.get_setting("llm.provider")
+    if saved is not None and saved != default:
+        if default == "gemini" and not gemini_key():
+            return  # появится ключ — переключим при следующем запуске
+        log.info("Модель: %s → %s (один основной мозг)", saved, default)
+        memory.set_setting("llm.provider", default)
+    memory.set_setting(SINGLE_BRAIN_FLAG, True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -704,9 +758,7 @@ def main(argv: list[str] | None = None) -> int:
     log.info("Запуск JARVIS: %s, Python %s, режим %s", _platform.platform(),
              sys.version.split()[0], "голос" if voice else "текст")
 
-    provider = str(config.get("llm.provider", "ollama"))
-    needs_local = provider in ("ollama", "hybrid") or (provider == "team" and "local" in config.get("team.members", []))
-    if config.get("llm.autostart_ollama", True) and needs_local:
+    if config.get("llm.autostart_ollama", True) and needs_local_ollama(config):
         from .llm import OllamaClient as _Client, ensure_ollama
         status = ensure_ollama(_Client(config.get("llm.base_url"), config.get("llm.model")))
         if status == "started":

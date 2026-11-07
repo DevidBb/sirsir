@@ -137,11 +137,19 @@ def test_missing_key(monkeypatch):
         client.chat([{"role": "user", "content": "hi"}])
 
 
-def test_make_llm_by_provider(config):
+def test_make_llm_by_provider(config, monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
     assert isinstance(make_llm(config), OllamaClient)
     config.set("llm.provider", "gemini")
     llm = make_llm(config)
     assert isinstance(llm, GeminiClient) and llm.model == config.get("llm.gemini.model")
+
+
+def test_gemini_without_key_falls_back_to_local(config, monkeypatch):
+    # Основной мозг — Gemini, но без ключа он не ответит вовсе: временно отвечает локальная модель.
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    config.set("llm.provider", "gemini")
+    assert isinstance(make_llm(config), OllamaClient)
 
 
 def test_provider_status_shows_gemini(config, monkeypatch):

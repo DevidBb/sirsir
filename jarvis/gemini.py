@@ -271,7 +271,10 @@ def make_llm(config):
     if str(config.get("llm.provider", "ollama")).lower() == "ollama_cloud":
         from .ollama_cloud import from_config
         return from_config(config)
-    if str(config.get("llm.provider", "ollama")).lower() == "gemini":
+    if str(config.get("llm.provider", "ollama")).lower() == "gemini" and not api_key():
+        # Без ключа Gemini не ответит вовсе — пусть пока отвечает локальная модель.
+        log.warning("Нет %s в .env: вместо Gemini отвечает локальная Ollama", KEY_ENV)
+    elif str(config.get("llm.provider", "ollama")).lower() == "gemini":
         return GeminiClient(model=str(config.get("llm.gemini.model", "") or DEFAULT_MODEL),
                             fallback_model=str(config.get("llm.gemini.fallback_model", FALLBACK_MODEL) or ""),
                             reasoning_effort=str(config.get("llm.gemini.reasoning_effort", "low") or ""),

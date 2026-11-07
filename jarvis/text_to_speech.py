@@ -13,7 +13,9 @@ from __future__ import annotations
 import logging
 import re
 import threading
+import time
 from pathlib import Path
+from typing import Callable
 
 log = logging.getLogger(__name__)
 
@@ -84,6 +86,9 @@ class Pyttsx3Backend:
             self._engine.setProperty("volume", float(volume))
 
     def speak(self, sentence: str) -> None:
+        notify = getattr(self, "notify", None)
+        if notify is not None:
+            notify()  # SAPI синтезирует внутри runAndWait — отмечаем момент перед ним
         self._engine.say(sentence)
         self._engine.runAndWait()
 
@@ -160,6 +165,9 @@ class SileroBackend:
         import sounddevice as sd  # type: ignore
         audio = self.synthesize(sentence)
         if audio is not None and audio.size:
+            notify = getattr(self, "notify", None)
+            if notify is not None:
+                notify()  # синтез закончен, звук начинается сейчас
             sd.play(audio, self.SAMPLE_RATE)
             sd.wait()
 
@@ -203,6 +211,9 @@ class Speaker:
         self.backend = None
         self._lock = threading.Lock()
         self._interrupt = threading.Event()
+        # Когда начал звучать первый звук после mark_timing() — для замера скорости ответа.
+        self.first_audio_at: float | None = None
+        self.clock: Callable[[], float] = time.monotonic
 
     @property
     def voice_name(self) -> str | None:
@@ -231,7 +242,16 @@ class Speaker:
             self.backend = backend
         elif self.backend is None:
             raise ValueError(f"Неизвестный TTS-движок: {self.engine_name}")
+        self.backend.notify = self._audio_started
         self.apply_settings()
+
+    def mark_timing(self) -> None:
+        """Начать новый замер: first_audio_at заполнится при первом звуке."""
+        self.first_audio_at = None
+
+    def _audio_started(self) -> None:
+        if self.first_audio_at is None:
+            self.first_audio_at = self.clock()
 
     def apply_settings(self) -> None:
         if self.backend is not None:

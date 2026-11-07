@@ -45,6 +45,7 @@ def test_text_mode_reminder_end_to_end(config, capsys):
 
 def test_switch_to_gemini_swaps_llm_client(config, monkeypatch):
     from jarvis.gemini import GeminiClient
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
     from jarvis.llm import OllamaClient
     monkeypatch.setattr(OllamaClient, "unload", lambda self: None)
     app = App(config, voice=False)

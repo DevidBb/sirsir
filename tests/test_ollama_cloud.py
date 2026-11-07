@@ -95,6 +95,7 @@ def test_cloud_stream_api_error_is_reported(transport):
 
 def test_switching_providers_replaces_the_transport(config, monkeypatch):
     from jarvis.gemini import GeminiClient
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
     from jarvis.main import App
     app = App.__new__(App)
     app.config = config

@@ -211,9 +211,10 @@ def test_memory_export_import_api(server):
     assert client.post("/api/memory/import", content=b"{}", headers={"origin": "http://evil.example"}).status_code == 403
 
 
-def test_team_is_the_shipped_default():
+def test_one_brain_is_the_shipped_default():
+    # Владелец попросил одного быстрого Джарвиса: по умолчанию одна модель (Gemini), а не опрос всех ИИ.
     from jarvis.config import Config
-    assert Config.load(ROOT / "config.toml").get("llm.provider") == "team"
+    assert Config.load(ROOT / "config.toml").get("llm.provider") == "gemini"
 
 
 # --- обновления: состояние, проверка, «Обновить и перезапустить» ---

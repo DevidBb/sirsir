@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import re
 import time
 from dataclasses import dataclass
@@ -53,6 +54,14 @@ BUILTIN_PHRASES = {
     "stop_dictation": ["закончи диктовку", "конец диктовки", "выключи диктовку", "стоп диктовка",
                        "хватит диктовки"],
 }
+# Приветствие и «как дела» — мгновенный ответ без модели (раньше «привет» шёл в LLM и ждал секунды).
+GREETINGS = ("привет", "приветик", "приветствую", "здравствуй", "здравствуйте", "хай",
+             "салют", "добрый день", "добрый вечер", "доброе утро", "hello", "hi", "hey")
+# Прощание: короткий ответ и конец разговора (ждём «Джарвис» снова).
+FAREWELLS = ("пока", "до свидания", "до встречи", "до завтра", "спокойной ночи", "доброй ночи")
+HOW_ARE_YOU = ("как дела", "как ты", "как жизнь", "как поживаешь", "как настроение", "как сам")
+# Обращения, которые не меняют смысл приветствия: «привет, Джарвис».
+GREETING_ADDRESS = ("джарвис", "jarvis", "дружище", "друг", "бро", "ну", "эй")
 TYPE_PREFIXES = ("напечатай ", "набери ", "впиши ")
 # Ответ на «Нашёл несколько вариантов…»: номер варианта.
 ORDINALS = {
@@ -862,6 +871,9 @@ class Assistant:
                 # Печатаем ровно то, что сказал пользователь, без участия LLM.
                 error = self.dictation.type_text(text.strip()[len(prefix):])
                 return Reply(error or "", expect_followup=False)
+        greeting = self._greeting(text)
+        if greeting is not None:
+            return greeting
         if self._matches(text, "help"):
             return Reply(HELP_TEXT)
         if self._matches(text, "start_dictation") and not self._matches(text, "stop_dictation"):
@@ -895,6 +907,46 @@ class Assistant:
                 return f"Память очищена, удалено записей: {n}."
             return Reply(self.confirmations.request("очистить всю долговременную память", clear))
         return None
+
+    def _greeting(self, text: str) -> Reply | None:
+        """«Привет», «как дела», «привет, Джарвис, как дела?» — ответ сразу, без модели.
+        Только если вся реплика — приветствие: «привет, открой ютуб» идёт дальше как команда."""
+        words = [w for w in normalize(text).split() if w not in GREETING_ADDRESS]
+        rest = " ".join(words)
+        if not rest:
+            return None
+        rng = getattr(self, "rng", random)
+        if rest in FAREWELLS:
+            night = "ноч" in rest
+            return Reply("Спокойной ночи!" if night else rng.choice(["Пока!", "До встречи!"]),
+                         expect_followup=False)
+        greet = how = False
+        if rest in GREETINGS:
+            greet = True
+        elif rest in HOW_ARE_YOU:
+            how = True
+        else:
+            for g in GREETINGS:
+                if rest.startswith(g + " ") and rest[len(g) + 1:] in HOW_ARE_YOU:
+                    greet = how = True
+                    break
+            else:
+                return None
+        hour = time.localtime().tm_hour
+        if 5 <= hour < 12:
+            hello = rng.choice(["Доброе утро!", "Привет!"])
+        elif 12 <= hour < 18:
+            hello = rng.choice(["Добрый день!", "Привет!"])
+        elif 18 <= hour < 23:
+            hello = rng.choice(["Добрый вечер!", "Привет!"])
+        else:
+            hello = "Привет!"
+        parts = [hello] if greet else []
+        if how:
+            parts.append(rng.choice(["Всё отлично, работаю.", "Всё хорошо, спасибо.",
+                                     "Отлично, готов к работе."]))
+        parts.append(rng.choice(["Чем помочь?", "Слушаю.", "Что нужно сделать?"]))
+        return Reply(" ".join(parts))
 
     def _system_prompt(self, query: str = "") -> str:
         return SYSTEM_PROMPT.format(name=self.name, facts=self.memory.context_for(query),
