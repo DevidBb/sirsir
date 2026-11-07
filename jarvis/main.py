@@ -682,8 +682,10 @@ def migrate_single_brain(config: Config, memory: Memory) -> None:
         return
     default = str(config.get("llm.provider", "ollama"))
     saved = memory.get_setting("llm.provider")
-    if saved is not None and saved != default:
-        if default == "gemini" and not gemini_key():
+    # Переключаем только на один быстрый мозг: если в config.local.toml выбран другой режим
+    # (например, медленный team), выбор из HUD не трогаем.
+    if saved is not None and saved != default and default == "gemini":
+        if not gemini_key():
             return  # появится ключ — переключим при следующем запуске
         log.info("Модель: %s → %s (один основной мозг)", saved, default)
         memory.set_setting("llm.provider", default)

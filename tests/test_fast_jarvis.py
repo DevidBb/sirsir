@@ -121,6 +121,15 @@ def test_no_gemini_key_keeps_saved_choice(config, monkeypatch):
     assert startup(config) == "gemini"
 
 
+def test_local_config_with_other_mode_keeps_hud_choice(config, monkeypatch):
+    # В config.local.toml владельца стоит другой режим — не переводим HUD-выбор gemini на него.
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    saved(config, "gemini")
+    config.set("llm.provider", "team")  # как если бы config.local.toml задавал team
+    apply_saved_settings(config)
+    assert config.get("llm.provider") == "gemini" and stored(config, "llm.provider") == "gemini"
+
+
 def test_nothing_saved_just_marks_done(config, monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     saved(config, None)
